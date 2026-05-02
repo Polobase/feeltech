@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FeelTech Web Serial Demo</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 720px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      button {
+        margin: 0.25rem 0.25rem 0.25rem 0;
+        padding: 0.4rem 0.8rem;
+      }
+      pre {
+        background: #f4f4f4;
+        padding: 1rem;
+        white-space: pre-wrap;
+      }
+      label {
+        display: inline-block;
+        width: 7rem;
+      }
+      input {
+        width: 8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>FeelTech FY-series — Web Serial demo</h1>
+    <p>
+      Click <em>Connect</em> to pick a serial port (Chrome / Edge / Opera only).
+      The library ships with no bundler config; this demo uses
+      <code>&lt;script type="module"&gt;</code> with a relative import to
+      <code>../dist/index.js</code>, so build with <code>pnpm build</code> first.
+    </p>
+
+    <p>
+      <button id="btn-connect">Connect</button>
+      <button id="btn-disconnect" disabled>Disconnect</button>
+      <button id="btn-state" disabled>Read State</button>
+    </p>
+
+    <fieldset>
+      <legend>CH1 settings</legend>
+      <p><label>Waveform</label><input id="wf" value="Sine" /></p>
+      <p><label>Freq (Hz)</label><input id="freq" type="number" value="1000" /></p>
+      <p><label>Amplitude (V)</label><input id="amp" type="number" step="0.1" value="3.3" /></p>
+      <p><label>Offset (V)</label><input id="off" type="number" step="0.1" value="0" /></p>
+      <p>
+        <button id="btn-apply" disabled>Apply</button>
+        <button id="btn-on" disabled>Output ON</button>
+        <button id="btn-off" disabled>Output OFF</button>
+      </p>
+    </fieldset>
+
+    <pre id="log"></pre>
+
+    <script type="module">
+      import { connectWeb, Channel, FEELTECH_USB_FILTERS } from "../dist/index.js";
+
+      const $ = (id) => document.getElementById(id);
+      const log = (...args) => {
+        $("log").textContent += args.map((a) =>
+          typeof a === "string" ? a : JSON.stringify(a)
+        ).join(" ") + "\n";
+      };
+
+      let fy = null;
+      const setEnabled = (open) => {
+        $("btn-connect").disabled = open;
+        $("btn-disconnect").disabled = !open;
+        $("btn-state").disabled = !open;
+        $("btn-apply").disabled = !open;
+        $("btn-on").disabled = !open;
+        $("btn-off").disabled = !open;
+      };
+
+      $("btn-connect").addEventListener("click", async () => {
+        try {
+          fy = await connectWeb({ filters: FEELTECH_USB_FILTERS, debug: true });
+          log("Connected:", fy.deviceModel || "(no model reported)", `family=${fy.family}`);
+          setEnabled(true);
+        } catch (err) {
+          log("Connect failed:", err.message);
+        }
+      });
+
+      $("btn-disconnect").addEventListener("click", async () => {
+        await fy?.close();
+        fy = null;
+        log("Disconnected.");
+        setEnabled(false);
+      });
+
+      $("btn-state").addEventListener("click", async () => {
+        const s = await fy.getChannelState(Channel.Main);
+        log("CH1:", s);
+      });
+
+      $("btn-apply").addEventListener("click", async () => {
+        await fy.configureChannel(Channel.Main, {
+          waveform: $("wf").value,
+          frequencyHz: Number($("freq").value),
+          amplitudeV: Number($("amp").value),
+          offsetV: Number($("off").value),
+        });
+        log("Applied.");
+      });
+
+      $("btn-on").addEventListener("click", async () => {
+        await fy.setOutput(Channel.Main, true);
+        log("Output ON");
+      });
+      $("btn-off").addEventListener("click", async () => {
+        await fy.setOutput(Channel.Main, false);
+        log("Output OFF");
+      });
+    </script>
+  </body>
+</html>
