@@ -130,14 +130,16 @@ export class NodeSerialTransport implements Transport {
   async readLine(timeoutMs: number): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       let settled = false;
+      const [linePromise, cancel] = this.lineBuffer.readLine();
+
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
+        cancel();
         reject(new FeelTechTimeoutError(`Read timed out after ${timeoutMs} ms`));
       }, timeoutMs);
 
-      this.lineBuffer
-        .readLine()
+      linePromise
         .then((line) => {
           if (settled) return;
           settled = true;

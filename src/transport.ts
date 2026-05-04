@@ -69,12 +69,22 @@ export class LineBuffer {
   /**
    * Wait for the next line. If a line is already buffered, resolves synchronously
    * on the next microtask.
+   * Returns a tuple of [promise, cancelFn] so the caller can clean up on timeout.
    */
-  readLine(): Promise<string> {
-    return new Promise<string>((resolve) => {
+  readLine(): [Promise<string>, () => void] {
+    let resolver: ((line: string) => void) | undefined;
+    const promise = new Promise<string>((resolve) => {
+      resolver = resolve;
       this.resolvers.push(resolve);
       this.flush();
     });
+    const cancel = () => {
+      if (resolver) {
+        const idx = this.resolvers.indexOf(resolver);
+        if (idx >= 0) this.resolvers.splice(idx, 1);
+      }
+    };
+    return [promise, cancel];
   }
 
   /** Discard buffered data and any pending readers. */
