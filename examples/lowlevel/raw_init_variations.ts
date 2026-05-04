@@ -1,7 +1,9 @@
 /**
  * Variation: try different init / timing scenarios and observe.
+ *
+ *   pnpm example:raw:init -- /dev/cu.wchusbserial1220
  */
-import { NodeSerialTransport } from "../src/transports/node.js";
+import { NodeSerialTransport } from "../../src/transports/node.js";
 
 const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
 
@@ -28,20 +30,17 @@ async function readManyLines(t: NodeSerialTransport, max = 5, idleMs = 400) {
   return lines;
 }
 
-// 1: NO init, just immediate UMO
 await trial("trial 1: no init, UMO immediately", async (t) => {
   await t.write("UMO\n");
   console.log("lines:", await readManyLines(t));
 });
 
-// 2: short delay before UMO
 await trial("trial 2: 1s delay, then UMO", async (t) => {
   await new Promise((r) => setTimeout(r, 1000));
   await t.write("UMO\n");
   console.log("lines:", await readManyLines(t));
 });
 
-// 3: init with \n\n\n, sleep, then UMO
 await trial("trial 3: \\n\\n\\n init, 500ms, then UMO", async (t) => {
   await t.write("\n\n\n");
   await new Promise((r) => setTimeout(r, 500));
@@ -49,7 +48,6 @@ await trial("trial 3: \\n\\n\\n init, 500ms, then UMO", async (t) => {
   console.log("lines:", await readManyLines(t));
 });
 
-// 4: stop bits 1 (FY2300-style)
 console.log("\n=== trial 4: stop bits = 1 ===");
 {
   const t = new NodeSerialTransport(path);

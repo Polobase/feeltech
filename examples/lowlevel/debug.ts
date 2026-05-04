@@ -1,10 +1,12 @@
 /**
  * Wire-level debug probe — shows every byte exchanged with the device.
+ *
+ *   pnpm example:debug -- /dev/cu.wchusbserial1220
  */
-import { connectNode, Channel } from "../src/index.js";
+import { connectNode, Channel } from "../../src/index.js";
 
 const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
-const fy = await connectNode(path, { debug: true, readTimeoutMs: 1000, readRetries: 0 });
+const fy = await connectNode(path, { debug: true, readTimeoutMs: 2000, readRetries: 2 });
 
 try {
   console.log("\n--- Probing CH1 ---\n");

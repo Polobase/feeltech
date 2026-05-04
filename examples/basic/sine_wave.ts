@@ -4,7 +4,7 @@
  *
  *   pnpm example:basic -- /dev/cu.wchusbserial1220
  */
-import { connectNode, Channel } from "../src/index.js";
+import { connectNode, Channel } from "../../src/index.js";
 
 const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
 const fy = await connectNode(path, { debug: false });

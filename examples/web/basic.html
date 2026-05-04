@@ -34,7 +34,7 @@
       Click <em>Connect</em> to pick a serial port (Chrome / Edge / Opera only).
       The library ships with no bundler config; this demo uses
       <code>&lt;script type="module"&gt;</code> with a relative import to
-      <code>../dist/index.js</code>, so build with <code>pnpm build</code> first.
+      <code>../../dist/index.js</code>, so build with <code>pnpm build</code> first.
     </p>
 
     <p>
@@ -59,7 +59,7 @@
     <pre id="log"></pre>
 
     <script type="module">
-      import { connectWeb, Channel, FEELTECH_USB_FILTERS } from "../dist/index.js";
+      import { connectWeb, Channel, FEELTECH_USB_FILTERS } from "../../dist/index.js";
 
       const $ = (id) => document.getElementById(id);
       const log = (...args) => {

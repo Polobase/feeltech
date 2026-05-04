@@ -3,7 +3,7 @@
  *
  *   pnpm example:list
  */
-import { listPorts } from "../src/transports/node.js";
+import { listPorts } from "../../src/transports/node.js";
 
 const ports = await listPorts();
 if (ports.length === 0) {
