@@ -1,11 +1,11 @@
 /**
  * System settings: buzzer, uplink, sync, cascade, save/load state.
  *
- *   pnpm example:system -- /dev/cu.wchusbserial1220
+ *   pnpm example:system -- /dev/cu.wchusbserial110
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
+const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
 const fy = await connectNode(path, { debug: false });
 
 try {

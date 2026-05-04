@@ -44,7 +44,7 @@ pnpm add serialport
 ```ts
 import { connectNode, Channel } from "feeltech";
 
-const fy = await connectNode("/dev/cu.wchusbserial1220");
+const fy = await connectNode("/dev/cu.wchusbserial110");
 console.log("Connected to", fy.deviceModel, "(family:", fy.family, ")");
 
 await fy.configureChannel(Channel.Main, {
@@ -198,7 +198,7 @@ const raw = await fy.sendRead("RMF");     // raw read
 ## Constructor options
 
 ```ts
-const fy = await connectNode("/dev/cu.wchusbserial1220", {
+const fy = await connectNode("/dev/cu.wchusbserial110", {
   family: "FY6900",       // override auto-detection ("FY2300" | "FY6900" | "Unknown")
   baudRate: 115200,       // override family default
   readTimeoutMs: 1500,    // per-read timeout
@@ -243,10 +243,10 @@ pnpm build
 | Script | Description |
 |---|---|
 | `pnpm exec tsx examples/node-list-ports.ts` | List all serial ports on this machine |
-| `pnpm exec tsx examples/node-info.ts /dev/cu.wchusbserial1220` | Probe model + read both channels |
-| `pnpm exec tsx examples/node-basic.ts /dev/cu.wchusbserial1220` | Configure & enable CH1 for 2 s |
-| `pnpm exec tsx examples/node-roundtrip.ts /dev/cu.wchusbserial1220` | Round-trip write → read for every parameter |
-| `pnpm exec tsx examples/node-calibrate.ts /dev/cu.wchusbserial1220` | Inspect raw responses, useful for debugging firmware quirks |
+| `pnpm exec tsx examples/node-info.ts /dev/cu.wchusbserial110` | Probe model + read both channels |
+| `pnpm exec tsx examples/node-basic.ts /dev/cu.wchusbserial110` | Configure & enable CH1 for 2 s |
+| `pnpm exec tsx examples/node-roundtrip.ts /dev/cu.wchusbserial110` | Round-trip write → read for every parameter |
+| `pnpm exec tsx examples/node-calibrate.ts /dev/cu.wchusbserial110` | Inspect raw responses, useful for debugging firmware quirks |
 | `examples/web-basic.html` | Static HTML page using Web Serial — open after `pnpm build` |
 
 ---

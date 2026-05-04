@@ -1,11 +1,11 @@
 /**
  * PSK: 1 kHz CMOS wave phase-shifted by 100 Hz square.
  *
- *   pnpm example:mod:psk -- /dev/cu.wchusbserial1220
+ *   pnpm example:mod:psk -- /dev/cu.wchusbserial110
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
+const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
 const fy = await connectNode(path, { debug: true });
 
 try {

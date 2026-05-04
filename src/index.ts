@@ -6,7 +6,7 @@
  * ```ts
  * import { connectNode, Channel } from "feeltech";
  *
- * const fy = await connectNode("/dev/cu.wchusbserial1220");
+ * const fy = await connectNode("/dev/cu.wchusbserial110");
  * await fy.setWaveform(Channel.Main, "Sine");
  * await fy.setFrequency(Channel.Main, 1000);
  * await fy.setAmplitude(Channel.Main, 3.3);
@@ -82,7 +82,7 @@ import type { FeelTechOptions } from "./types.js";
  *
  * Requires the `serialport` peer dependency.
  *
- * @param path     Serial device path (e.g. "/dev/cu.wchusbserial1220" or "COM3").
+ * @param path     Serial device path (e.g. "/dev/cu.wchusbserial110" or "COM3").
  * @param options  Optional FeelTech options.
  */
 export async function connectNode(

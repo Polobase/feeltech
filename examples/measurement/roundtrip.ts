@@ -1,11 +1,11 @@
 /**
  * Round-trip test: write then immediately read each parameter, verify they match.
  *
- *   pnpm example:roundtrip -- /dev/cu.wchusbserial1220
+ *   pnpm example:roundtrip -- /dev/cu.wchusbserial110
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
+const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
 const fy = await connectNode(path, { debug: true, readTimeoutMs: 1000 });
 
 async function check(label: string, write: () => Promise<void>, read: () => Promise<number>, expected: number, tol = 0.01) {

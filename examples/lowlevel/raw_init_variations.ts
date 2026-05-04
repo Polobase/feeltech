@@ -1,11 +1,11 @@
 /**
  * Variation: try different init / timing scenarios and observe.
  *
- *   pnpm example:raw:init -- /dev/cu.wchusbserial1220
+ *   pnpm example:raw:init -- /dev/cu.wchusbserial110
  */
 import { NodeSerialTransport } from "../../src/transports/node.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
+const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
 
 async function trial(label: string, fn: (t: NodeSerialTransport) => Promise<void>) {
   console.log(`\n=== ${label} ===`);

@@ -1,11 +1,11 @@
 /**
  * AM modulation: 2 kHz sine modulated by 150 Hz triangle.
  *
- *   pnpm example:mod:am -- /dev/cu.wchusbserial1220
+ *   pnpm example:mod:am -- /dev/cu.wchusbserial110
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
+const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
 const fy = await connectNode(path, { debug: true });
 
 try {
