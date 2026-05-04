@@ -5,10 +5,6 @@
  *
  * The G-code parser supports G01 (linear move) commands with X, Y, Z (pen up/down).
  * The path is interpolated to 8192 points and output as arbitrary waveforms.
- *
- * Note: Arbitrary waveform upload is not yet implemented in this library.
- *       This example prepares the interpolated data. Once upload is supported,
- *       the data can be sent to arbitrary waveform slots.
  */
 import { connectNode, Channel } from "../../src/index.js";
 import { readFileSync } from "fs";
@@ -145,11 +141,20 @@ console.log(`Y: ${ymin.toFixed(2)} .. ${ymax.toFixed(2)}`);
 const xValues = data.map((p) => p.x);
 const yValues = data.map((p) => p.y);
 
-console.log("\nNote: Arbitrary waveform upload not yet implemented.");
-console.log("      Once supported, upload xValues to arb1 and yValues to arb2.");
-
 const fy = await connectNode(path, { debug: false });
 try {
+  // Switch away from arbitrary waveforms before uploading.
+  await fy.setWaveform(Channel.Main, "Sine");
+  await fy.setWaveform(Channel.Aux, "Sine");
+  await fy.setOutput(Channel.Main, false);
+  await fy.setOutput(Channel.Aux, false);
+
+  console.log("Uploading X data to arb1...");
+  await fy.uploadWaveform(1, xValues, { minValue: xmin, maxValue: xmax });
+
+  console.log("Uploading Y data to arb2...");
+  await fy.uploadWaveform(2, yValues, { minValue: ymin, maxValue: ymax });
+
   await fy.configureChannel(Channel.Main, {
     waveform: "Arbitrary1",
     frequencyHz: 1000,

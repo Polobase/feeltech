@@ -4,14 +4,10 @@
  * Connect both channels to an oscilloscope in XY mode to see the star.
  *
  *   pnpm example:star -- /dev/cu.wchusbserial110
- *
- * Note: Arbitrary waveform upload is not yet implemented in this library.
- *       This example prepares the interpolated data. Once upload is supported,
- *       the data can be sent to arbitrary waveform slots 1 and 2.
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial1220";
+const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
 const DATA_LENGTH = 8192;
 
 const POINTS: [number, number][] = [
@@ -81,12 +77,19 @@ const yValues = data.map(([, y]) => y);
 console.log(`\nPrepared ${data.length} points for XY star plot`);
 console.log("X range:", Math.min(...xValues).toFixed(4), "to", Math.max(...xValues).toFixed(4));
 console.log("Y range:", Math.min(...yValues).toFixed(4), "to", Math.max(...yValues).toFixed(4));
-console.log("\nNote: Arbitrary waveform upload not yet implemented.");
-console.log("      Once supported, upload xValues to arb1 and yValues to arb2.");
 
 const fy = await connectNode(path, { debug: false });
 try {
-  // For now, just select arbitrary slots (data must be pre-loaded manually)
+  // Switch away from arbitrary waveforms before uploading.
+  await fy.setWaveform(Channel.Main, "Sine");
+  await fy.setWaveform(Channel.Aux, "Sine");
+
+  console.log("Uploading X data to arb1...");
+  await fy.uploadWaveform(1, xValues, { minValue: -1, maxValue: 1 });
+
+  console.log("Uploading Y data to arb2...");
+  await fy.uploadWaveform(2, yValues, { minValue: -1, maxValue: 1 });
+
   await fy.configureChannel(Channel.Main, {
     waveform: "Arbitrary1",
     frequencyHz: 10000,

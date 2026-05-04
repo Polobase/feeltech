@@ -467,6 +467,116 @@ export class FeelTech {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
+  // Arbitrary waveform upload
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Upload a custom arbitrary waveform to the device.
+   *
+   * @param slot    Arbitrary waveform slot (1-based). FY2300: 1-16, FY6900: 1-64.
+   * @param values  Float values to upload. Automatically scaled to 14-bit.
+   * @param options Optional: min/max for scaling, sample count.
+   */
+  async uploadWaveform(
+    slot: number,
+    values: number[],
+    options: { minValue?: number; maxValue?: number; sampleCount?: number } = {},
+  ): Promise<void> {
+    const minValue = options.minValue ?? -1.0;
+    const maxValue = options.maxValue ?? 1.0;
+    const sampleCount = options.sampleCount ?? 8192;
+
+    if (slot < 1) {
+      throw new FeelTechError(`Waveform slot must be >= 1, got ${slot}`);
+    }
+
+    if (values.length !== sampleCount) {
+      throw new FeelTechError(
+        `Expected ${sampleCount} values, got ${values.length}`,
+      );
+    }
+
+    // Check that neither channel is using this arbitrary waveform.
+    for (const ch of [Channel.Main, Channel.Aux]) {
+      const currentWave = await this.getWaveformName(ch);
+      const expectedName = `Arbitrary${slot}`;
+      if (currentWave === expectedName) {
+        throw new FeelTechError(
+          `Cannot update ${expectedName} because it is active on channel ${ch === Channel.Main ? "CH1" : "CH2"}. Switch to a different waveform first.`,
+        );
+      }
+    }
+
+    // Convert float values to 14-bit raw integers.
+    const rawValues = new Uint16Array(sampleCount);
+    const range = maxValue - minValue;
+    for (let i = 0; i < sampleCount; i++) {
+      let v = Math.floor(((values[i]! - minValue) * 16384) / range);
+      if (v < 0) v = 0;
+      if (v > 16383) v = 16383;
+      rawValues[i] = v;
+    }
+
+    // Pack into bytes: low byte (8 bits) + high byte (upper 6 bits).
+    const data = new Uint8Array(sampleCount * 2);
+    for (let i = 0; i < sampleCount; i++) {
+      const v = rawValues[i]!;
+      data[i * 2] = v & 0xff;
+      data[i * 2 + 1] = (v >> 8) & 0x3f;
+    }
+
+    // Step 1-3: Send command and binary data under the command lock.
+    await this.run(async () => {
+      const cmd = `DDS_WAVE${slot}\n`;
+      this.log(`>> ${JSON.stringify(cmd)}`);
+      await this.transport.write(cmd);
+
+      const ack = await this.readLineWithRetry(2000, 3);
+      this.log(`<< DDS_WAVE ack: ${JSON.stringify(ack)}`);
+      if (ack !== "W") {
+        throw new FeelTechError(
+          `DDS_WAVE command not acknowledged. Expected "W", got ${JSON.stringify(ack)}`,
+        );
+      }
+
+      this.log(`>> [binary waveform data, ${data.length} bytes]`);
+      await this.transport.write(data);
+    });
+
+    // Step 4: Wait for the device to finish processing, then verify it's responsive.
+    // The FY6300 sends "HN" (without newline) very slowly; we just wait and flush.
+    await this.delay(3000);
+    await this.transport.flush();
+    await this.delay(100);
+
+    try {
+      const probe = await this.sendRead("UMO");
+      this.log(`<< Upload verified, device responsive: ${JSON.stringify(probe)}`);
+    } catch (err) {
+      throw new FeelTechError(
+        `DDS_WAVE upload failed — device not responding after data transfer`,
+        err,
+      );
+    }
+  }
+
+  /**
+   * Read a line, retrying on empty responses.
+   */
+  private async readLineWithRetry(timeoutMs: number, maxRetries: number): Promise<string> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const line = await this.transport.readLine(timeoutMs);
+        const cleaned = cleanResponse(line);
+        if (cleaned.length > 0) return cleaned;
+      } catch {
+        // Empty or timeout — retry if attempts remain.
+      }
+    }
+    return "";
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Frequency counter / measurement
   // ──────────────────────────────────────────────────────────────────────────
 

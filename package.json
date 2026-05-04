@@ -58,7 +58,8 @@
     "example:arb": "node --import tsx/esm examples/arb/simple_arb.ts",
     "example:star": "node --import tsx/esm examples/arb/xy_star_plot.ts",
     "example:gcode": "node --import tsx/esm examples/arb/xy_gcode_plot.ts",
-    "example:system": "node --import tsx/esm examples/system/settings.ts"
+    "example:system": "node --import tsx/esm examples/system/settings.ts",
+    "example:demo": "node --import tsx/esm examples/demo.ts"
   },
   "keywords": [
     "feeltech",
