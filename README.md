@@ -12,8 +12,9 @@ The protocol implementation has been verified empirically against a real **FY630
 
 - **Dual environment.** Same TypeScript API in Node and the browser. Per-environment transports are dynamically imported, so browser bundlers won't pull in `serialport`.
 - **Full command coverage** — channel parameters, modulation (AM/FM/PM/ASK/FSK/PSK/Burst), sweep, frequency counter / pulse-width measurement, save/load slots, sync, cascade, identity.
+- **Arbitrary waveform upload** — upload custom waveforms to device memory (14-bit, 8192 samples per waveform).
 - **Auto-detection** of the device family (FY2300 vs. FY6300/6900 family) by querying `UMO`. Encoding/decoding is automatically chosen for the detected family.
-- **Robust framing.** The FY6300 emits trailing empty newlines after every response and an ack newline after every write — both handled transparently.
+- **Robust framing** with retry logic — handles trailing empty newlines, slow responses, and timing quirks transparently.
 - **Strict types.** Every command is typed; channel state and measurement results are exposed as plain TypeScript interfaces.
 - **No build step required for the library** — ships pre-built ESM with `.d.ts` files.
 
@@ -162,6 +163,20 @@ await fy.startSweep();
 await fy.stopSweep();
 ```
 
+### Arbitrary waveform upload
+
+```ts
+const values = Array.from({ length: 8192 }, (_, i) => Math.sin(i * 0.001));
+await fy.uploadWaveform(1, values, { minValue: -1, maxValue: 1 });
+
+await fy.configureChannel(Channel.Main, {
+  waveform: "Arbitrary1",
+  frequencyHz: 1000,
+  amplitudeV: 3,
+  enabled: true,
+});
+```
+
 ### Frequency counter / measurement
 
 ```ts
@@ -233,21 +248,76 @@ The library handles all of this; your code stays the same regardless of family.
 
 ## Examples
 
-The repo includes runnable examples. After installing dev deps and building:
+The repo includes runnable examples organized by topic:
 
-```bash
-pnpm install
-pnpm build
-```
+### Basic examples
 
 | Script | Description |
 |---|---|
-| `pnpm exec tsx examples/node-list-ports.ts` | List all serial ports on this machine |
-| `pnpm exec tsx examples/node-info.ts /dev/cu.wchusbserial110` | Probe model + read both channels |
-| `pnpm exec tsx examples/node-basic.ts /dev/cu.wchusbserial110` | Configure & enable CH1 for 2 s |
-| `pnpm exec tsx examples/node-roundtrip.ts /dev/cu.wchusbserial110` | Round-trip write → read for every parameter |
-| `pnpm exec tsx examples/node-calibrate.ts /dev/cu.wchusbserial110` | Inspect raw responses, useful for debugging firmware quirks |
-| `examples/web-basic.html` | Static HTML page using Web Serial — open after `pnpm build` |
+| `pnpm example:simple /dev/tty.wchusbserial110` | Minimalist: 1 kHz square wave |
+| `pnpm example:basic /dev/tty.wchusbserial110` | Sine wave with 2-second output |
+| `pnpm example:info /dev/tty.wchusbserial110` | Probe model, ID, and both channel states |
+| `pnpm example:allwaves /dev/tty.wchusbserial110` | Cycle through all waveforms |
+| `pnpm example:list` | List all serial ports |
+
+### Modulation examples
+
+| Script | Description |
+|---|---|
+| `pnpm example:mod:am /dev/tty.wchusbserial110` | AM modulation: 2 kHz + 150 Hz |
+| `pnpm example:mod:fm /dev/tty.wchusbserial110` | FM modulation: 2 kHz + 150 Hz |
+| `pnpm example:mod:pm /dev/tty.wchusbserial110` | PM modulation: 1 kHz + 500 Hz |
+| `pnpm example:mod:fsk /dev/tty.wchusbserial110` | FSK: toggle between 1/2 kHz |
+| `pnpm example:mod:psk /dev/tty.wchusbserial110` | PSK: phase-shift keying |
+| `pnpm example:mod:burst /dev/tty.wchusbserial110` | Burst mode: N cycles per trigger |
+
+### Sweep examples
+
+| Script | Description |
+|---|---|
+| `pnpm example:sweep:freq /dev/tty.wchusbserial110` | Frequency sweep |
+| `pnpm example:sweep:amp /dev/tty.wchusbserial110` | Amplitude sweep |
+| `pnpm example:sweep:offset /dev/tty.wchusbserial110` | Offset sweep |
+| `pnpm example:sweep:duty /dev/tty.wchusbserial110` | Duty cycle sweep |
+
+### Measurement examples
+
+| Script | Description |
+|---|---|
+| `pnpm example:measure /dev/tty.wchusbserial110` | Read frequency counter |
+| `pnpm example:counter /dev/tty.wchusbserial110` | Count pulses for 10 seconds |
+| `pnpm example:calibrate /dev/tty.wchusbserial110` | Inspect raw responses |
+| `pnpm example:roundtrip /dev/tty.wchusbserial110` | Verify write→read accuracy |
+
+### Arbitrary waveform examples
+
+| Script | Description |
+|---|---|
+| `pnpm example:arb /dev/tty.wchusbserial110` | Upload and play a stairstep |
+| `pnpm example:star /dev/tty.wchusbserial110` | XY star plot (oscilloscope XY mode) |
+| `pnpm example:gcode /dev/tty.wchusbserial110 examples/gcode/star.gcd` | XY plot from G-code |
+
+### System & debug examples
+
+| Script | Description |
+|---|---|
+| `pnpm example:system /dev/tty.wchusbserial110` | Buzzer, uplink, sync, save/load |
+| `pnpm example:debug /dev/tty.wchusbserial110` | Wire-level debug with hex dumps |
+| `pnpm example:raw:cmd /dev/tty.wchusbserial110` | Send individual commands |
+| `pnpm example:raw:bytes /dev/tty.wchusbserial110` | Raw byte-level protocol |
+| `pnpm example:raw:dump /dev/tty.wchusbserial110` | Hex-print all responses |
+
+### Demo mode
+
+```bash
+pnpm example:demo /dev/tty.wchusbserial110
+```
+
+Continuously cycles through waveforms, sweeps, modulation, and arbitrary waveforms for demonstration purposes. Press **Ctrl+C** to stop.
+
+### Browser example
+
+Open `examples/web/basic.html` in Chrome/Edge after running `pnpm build`.
 
 ---
 
@@ -264,6 +334,17 @@ src/
 │   ├── node.ts       # NodeSerialTransport (uses serialport)
 │   └── web.ts        # WebSerialTransport (uses navigator.serial)
 └── types.ts          # enums, error classes, result types
+
+examples/
+├── basic/            # simple, info, list_ports, all_waves, sine_wave
+├── modulation/       # am, fm, pm, fsk, psk, burst
+├── sweep/            # sweep_frequency, sweep_amplitude, sweep_offset, sweep_duty
+├── measurement/      # measure, counter, calibrate, roundtrip
+├── arb/              # simple_arb, xy_star_plot, xy_gcode_plot
+├── system/           # settings
+├── lowlevel/         # debug, raw_commands, raw_bytes, raw_dump, raw_init_variations
+├── gcode/            # sample .gcd files (star, cat)
+└── web/              # basic.html (Web Serial demo)
 ```
 
 The `Transport` interface is intentionally minimal (`open`, `write`, `readLine`, `flush`, `close`). You can plug in a mock transport in tests, or wrap a TCP-to-serial bridge.
@@ -280,7 +361,7 @@ A full protocol reference, derived from the official FeelTech PDFs and corrected
 
 **`Failed to open <path>`** — On macOS use `/dev/cu.wchusbserial*` (not `/dev/tty.wchusbserial*`); on Linux check `dmesg | tail` after plugging in to find the device, and ensure your user is in the `dialout` group.
 
-**Garbled / shifted readings** — Older firmware sends extra trailing newlines. The library handles this, but if you bypass `sendRead` and read the port directly, drain the trailing empties yourself.
+**Garbled / shifted readings** — The library handles trailing empty newlines and retry logic automatically. If you bypass `sendRead` and read the port directly, drain the trailing empties yourself.
 
 **Reads time out on FY6900** — Ensure the transport is opened with **2 stop bits**. The library does this automatically when family is `FY6900`/`Unknown` but not if you override `family: "FY2300"` on a 6900-series device.
 
