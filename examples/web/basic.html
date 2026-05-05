@@ -2,86 +2,510 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>FeelTech Web Serial Demo</title>
+    <title>FeelTech FY-series — Full Web Serial Control Panel</title>
     <style>
+      :root {
+        --bg: #f5f5f5;
+        --panel: #fff;
+        --accent: #0066cc;
+        --accent-hover: #0052a3;
+        --border: #ddd;
+        --text: #333;
+        --muted: #666;
+        --success: #28a745;
+        --danger: #dc3545;
+        --warning: #ffc107;
+      }
+      * { box-sizing: border-box; }
       body {
-        font-family: system-ui, sans-serif;
-        max-width: 720px;
-        margin: 2rem auto;
-        padding: 0 1rem;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        margin: 0;
+        padding: 1rem;
+        line-height: 1.5;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      h1 {
+        margin: 0 0 0.5rem;
+        font-size: 1.5rem;
+      }
+      .subtitle {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-bottom: 1rem;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 1rem;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1rem;
+      }
+      .panel h2 {
+        margin: 0 0 1rem;
+        font-size: 1.1rem;
+        color: var(--accent);
+        border-bottom: 2px solid var(--border);
+        padding-bottom: 0.5rem;
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+      }
+      .field label {
+        width: 100px;
+        font-size: 0.85rem;
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+      .field input, .field select {
+        flex: 1;
+        padding: 0.35rem 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-size: 0.9rem;
+      }
+      .field input[type="number"] { width: 80px; }
+      .btn-group {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.75rem;
       }
       button {
-        margin: 0.25rem 0.25rem 0.25rem 0;
-        padding: 0.4rem 0.8rem;
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 4px;
+        background: var(--accent);
+        color: white;
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: background 0.15s;
       }
-      pre {
-        background: #f4f4f4;
+      button:hover:not(:disabled) { background: var(--accent-hover); }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.secondary {
+        background: #6c757d;
+      }
+      button.secondary:hover:not(:disabled) { background: #545b62; }
+      button.success {
+        background: var(--success);
+      }
+      button.danger {
+        background: var(--danger);
+      }
+      button.warning {
+        background: var(--warning);
+        color: #000;
+      }
+      .log {
+        background: #1e1e1e;
+        color: #d4d4d4;
         padding: 1rem;
+        border-radius: 4px;
+        font-family: "SF Mono", Monaco, monospace;
+        font-size: 0.8rem;
+        max-height: 300px;
+        overflow-y: auto;
         white-space: pre-wrap;
+        word-break: break-word;
       }
-      label {
+      .status {
         display: inline-block;
-        width: 7rem;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--danger);
+        margin-right: 0.5rem;
       }
-      input {
-        width: 8rem;
+      .status.connected { background: var(--success); }
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+      .channel-panel {
+        border: 2px solid var(--border);
+        border-radius: 6px;
+        padding: 0.75rem;
+      }
+      .channel-panel h3 {
+        margin: 0 0 0.75rem;
+        font-size: 1rem;
+      }
+      .preset-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+      }
+      .preset-grid button {
+        padding: 0.35rem 0.5rem;
+        font-size: 0.75rem;
+      }
+      .measurement-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.5rem;
+      }
+      .measurement-item {
+        background: var(--bg);
+        padding: 0.5rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+      }
+      .measurement-item .value {
+        font-weight: bold;
+        font-size: 1.1rem;
+        color: var(--accent);
+      }
+      .arb-preview {
+        width: 100%;
+        height: 120px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: #1e1e1e;
+        margin-top: 0.5rem;
+      }
+      .arb-controls {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+        flex-wrap: wrap;
+      }
+      @media (max-width: 768px) {
+        .two-col { grid-template-columns: 1fr; }
+        .measurement-grid { grid-template-columns: 1fr; }
       }
     </style>
   </head>
   <body>
-    <h1>FeelTech FY-series — Web Serial demo</h1>
-    <p>
-      Click <em>Connect</em> to pick a serial port (Chrome / Edge / Opera only).
-      The library ships with no bundler config; this demo uses
-      <code>&lt;script type="module"&gt;</code> with a relative import to
-      <code>../../dist/index.js</code>, so build with <code>pnpm build</code> first.
-    </p>
-
-    <p>
-      <button id="btn-connect">Connect</button>
-      <button id="btn-disconnect" disabled>Disconnect</button>
-      <button id="btn-state" disabled>Read State</button>
-    </p>
-
-    <fieldset>
-      <legend>CH1 settings</legend>
-      <p><label>Waveform</label><input id="wf" value="Sine" /></p>
-      <p><label>Freq (Hz)</label><input id="freq" type="number" value="1000" /></p>
-      <p><label>Amplitude (V)</label><input id="amp" type="number" step="0.1" value="3.3" /></p>
-      <p><label>Offset (V)</label><input id="off" type="number" step="0.1" value="0" /></p>
-      <p>
-        <button id="btn-apply" disabled>Apply</button>
-        <button id="btn-on" disabled>Output ON</button>
-        <button id="btn-off" disabled>Output OFF</button>
+    <div class="container">
+      <h1>FeelTech FY-series Control Panel</h1>
+      <p class="subtitle">
+        <span id="status-dot" class="status"></span>
+        <span id="status-text">Disconnected</span>
+        — Chrome / Edge / Opera only. Build with <code>pnpm build</code> first.
       </p>
-    </fieldset>
 
-    <pre id="log"></pre>
+      <div class="grid">
+        <!-- Connection Panel -->
+        <div class="panel">
+          <h2>Connection</h2>
+          <div class="btn-group">
+            <button id="btn-connect">Connect</button>
+            <button id="btn-disconnect" class="secondary" disabled>Disconnect</button>
+            <button id="btn-device-info" class="secondary" disabled>Device Info</button>
+          </div>
+          <div id="device-info" style="margin-top: 0.75rem; font-size: 0.85rem; color: var(--muted);"></div>
+        </div>
+
+        <!-- Channel Controls -->
+        <div class="panel" style="grid-column: 1 / -1;">
+          <h2>Channel Controls</h2>
+          <div class="two-col">
+            <div class="channel-panel">
+              <h3>CH1 (Main)</h3>
+              <div class="field">
+                <label>Waveform</label>
+                <select id="ch1-wf">
+                  <option value="Sine">Sine</option>
+                  <option value="Square">Square</option>
+                  <option value="Triangle">Triangle</option>
+                  <option value="Ramp">Ramp</option>
+                  <option value="NegRamp">NegRamp</option>
+                  <option value="Stairstep">Stairstep</option>
+                  <option value="ECG">ECG</option>
+                  <option value="Sinc-Pulse">Sinc-Pulse</option>
+                  <option value="Arbitrary1">Arbitrary1</option>
+                  <option value="Arbitrary2">Arbitrary2</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Frequency</label>
+                <input id="ch1-freq" type="number" value="1000" step="1" />
+                <span>Hz</span>
+              </div>
+              <div class="field">
+                <label>Amplitude</label>
+                <input id="ch1-amp" type="number" value="3" step="0.1" />
+                <span>V</span>
+              </div>
+              <div class="field">
+                <label>Offset</label>
+                <input id="ch1-offset" type="number" value="0" step="0.1" />
+                <span>V</span>
+              </div>
+              <div class="field">
+                <label>Duty Cycle</label>
+                <input id="ch1-duty" type="number" value="50" step="1" min="0" max="100" />
+                <span>%</span>
+              </div>
+              <div class="field">
+                <label>Phase</label>
+                <input id="ch1-phase" type="number" value="0" step="1" />
+                <span>deg</span>
+              </div>
+              <div class="btn-group">
+                <button id="btn-ch1-apply" disabled>Apply</button>
+                <button id="btn-ch1-on" class="success" disabled>ON</button>
+                <button id="btn-ch1-off" class="danger" disabled>OFF</button>
+              </div>
+            </div>
+
+            <div class="channel-panel">
+              <h3>CH2 (Aux)</h3>
+              <div class="field">
+                <label>Waveform</label>
+                <select id="ch2-wf">
+                  <option value="Sine">Sine</option>
+                  <option value="Square">Square</option>
+                  <option value="Triangle">Triangle</option>
+                  <option value="Ramp">Ramp</option>
+                  <option value="NegRamp">NegRamp</option>
+                  <option value="Stairstep">Stairstep</option>
+                  <option value="ECG">ECG</option>
+                  <option value="Sinc-Pulse">Sinc-Pulse</option>
+                  <option value="Arbitrary1">Arbitrary1</option>
+                  <option value="Arbitrary2">Arbitrary2</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Frequency</label>
+                <input id="ch2-freq" type="number" value="1000" step="1" />
+                <span>Hz</span>
+              </div>
+              <div class="field">
+                <label>Amplitude</label>
+                <input id="ch2-amp" type="number" value="3" step="0.1" />
+                <span>V</span>
+              </div>
+              <div class="field">
+                <label>Offset</label>
+                <input id="ch2-offset" type="number" value="0" step="0.1" />
+                <span>V</span>
+              </div>
+              <div class="field">
+                <label>Duty Cycle</label>
+                <input id="ch2-duty" type="number" value="50" step="1" min="0" max="100" />
+                <span>%</span>
+              </div>
+              <div class="field">
+                <label>Phase</label>
+                <input id="ch2-phase" type="number" value="0" step="1" />
+                <span>deg</span>
+              </div>
+              <div class="btn-group">
+                <button id="btn-ch2-apply" disabled>Apply</button>
+                <button id="btn-ch2-on" class="success" disabled>ON</button>
+                <button id="btn-ch2-off" class="danger" disabled>OFF</button>
+              </div>
+            </div>
+          </div>
+
+          <h3 style="margin-top: 1rem; font-size: 1rem;">Presets</h3>
+          <div class="preset-grid">
+            <button id="preset-sine-1k" disabled>1 kHz Sine</button>
+            <button id="preset-square-1k" disabled>1 kHz Square</button>
+            <button id="preset-triangle-1k" disabled>1 kHz Triangle</button>
+            <button id="preset-ramp" disabled>Ramp</button>
+            <button id="preset-ecg" disabled>ECG</button>
+            <button id="preset-sync" disabled>Sync CH1/CH2</button>
+          </div>
+        </div>
+
+        <!-- Modulation -->
+        <div class="panel">
+          <h2>Modulation</h2>
+          <div class="field">
+            <label>Mode</label>
+            <select id="mod-mode">
+              <option value="">Off</option>
+              <option value="4">AM</option>
+              <option value="5">FM</option>
+              <option value="6">PM</option>
+              <option value="1">ASK</option>
+              <option value="2">FSK</option>
+              <option value="3">Burst</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Source</label>
+            <select id="mod-source">
+              <option value="0">CH2</option>
+              <option value="1">EXT AC</option>
+              <option value="2">Manual</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Depth/Count</label>
+            <input id="mod-value" type="number" value="50" step="1" />
+          </div>
+          <div class="btn-group">
+            <button id="btn-mod-apply" disabled>Apply Modulation</button>
+            <button id="btn-mod-trigger" class="secondary" disabled>Trigger</button>
+          </div>
+        </div>
+
+        <!-- Sweep -->
+        <div class="panel">
+          <h2>Sweep</h2>
+          <div class="field">
+            <label>Parameter</label>
+            <select id="sweep-param">
+              <option value="0">Frequency</option>
+              <option value="1">Amplitude</option>
+              <option value="2">Offset</option>
+              <option value="3">Duty Cycle</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Start</label>
+            <input id="sweep-start" type="number" value="100" />
+          </div>
+          <div class="field">
+            <label>End</label>
+            <input id="sweep-end" type="number" value="5000" />
+          </div>
+          <div class="field">
+            <label>Time (s)</label>
+            <input id="sweep-time" type="number" value="2" step="0.1" />
+          </div>
+          <div class="btn-group">
+            <button id="btn-sweep-config" disabled>Configure</button>
+            <button id="btn-sweep-start" class="success" disabled>Start</button>
+            <button id="btn-sweep-stop" class="danger" disabled>Stop</button>
+          </div>
+        </div>
+
+        <!-- Measurement -->
+        <div class="panel">
+          <h2>Measurement</h2>
+          <div class="btn-group">
+            <button id="btn-measure" disabled>Read Measurement</button>
+            <button id="btn-counter-reset" class="secondary" disabled>Reset Counter</button>
+          </div>
+          <div class="measurement-grid" id="measurement-display" style="margin-top: 0.75rem;">
+            <div class="measurement-item">
+              <div>Frequency</div>
+              <div class="value" id="meas-freq">--</div>
+            </div>
+            <div class="measurement-item">
+              <div>Count</div>
+              <div class="value" id="meas-count">--</div>
+            </div>
+            <div class="measurement-item">
+              <div>Period</div>
+              <div class="value" id="meas-period">--</div>
+            </div>
+            <div class="measurement-item">
+              <div>Duty Cycle</div>
+              <div class="value" id="meas-duty">--</div>
+            </div>
+            <div class="measurement-item">
+              <div>+Pulse</div>
+              <div class="value" id="meas-pos">--</div>
+            </div>
+            <div class="measurement-item">
+              <div>-Pulse</div>
+              <div class="value" id="meas-neg">--</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Arbitrary Waveform -->
+        <div class="panel">
+          <h2>Arbitrary Waveform</h2>
+          <div class="field">
+            <label>Slot</label>
+            <select id="arb-slot">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Type</label>
+            <select id="arb-type">
+              <option value="sine">Sine</option>
+              <option value="square">Square</option>
+              <option value="triangle">Triangle</option>
+              <option value="sawtooth">Sawtooth</option>
+              <option value="noise">Noise</option>
+              <option value="stairstep">Stairstep</option>
+            </select>
+          </div>
+          <canvas id="arb-canvas" class="arb-preview"></canvas>
+          <div class="arb-controls">
+            <button id="btn-arb-preview" disabled>Preview</button>
+            <button id="btn-arb-upload" class="success" disabled>Upload</button>
+          </div>
+        </div>
+
+        <!-- System -->
+        <div class="panel">
+          <h2>System</h2>
+          <div class="btn-group">
+            <button id="btn-buzzer" class="warning" disabled>Buzzer</button>
+            <button id="btn-save" class="secondary" disabled>Save Slot 1</button>
+            <button id="btn-load" class="secondary" disabled>Load Slot 1</button>
+            <button id="btn-sync-freq" class="secondary" disabled>Sync Freq</button>
+          </div>
+        </div>
+
+        <!-- Log -->
+        <div class="panel" style="grid-column: 1 / -1;">
+          <h2>Log</h2>
+          <div class="btn-group" style="margin-bottom: 0.5rem;">
+            <button id="btn-clear-log" class="secondary">Clear</button>
+          </div>
+          <div id="log" class="log"></div>
+        </div>
+      </div>
+    </div>
 
     <script type="module">
       import { connectWeb, Channel, FEELTECH_USB_FILTERS } from "../../dist/index.js";
 
       const $ = (id) => document.getElementById(id);
       const log = (...args) => {
-        $("log").textContent += args.map((a) =>
+        const el = $("log");
+        el.textContent += args.map((a) =>
           typeof a === "string" ? a : JSON.stringify(a)
         ).join(" ") + "\n";
+        el.scrollTop = el.scrollHeight;
       };
 
       let fy = null;
       const setEnabled = (open) => {
+        document.querySelectorAll("button:not(#btn-connect):not(#btn-clear-log)").forEach((b) => {
+          b.disabled = !open;
+        });
         $("btn-connect").disabled = open;
-        $("btn-disconnect").disabled = !open;
-        $("btn-state").disabled = !open;
-        $("btn-apply").disabled = !open;
-        $("btn-on").disabled = !open;
-        $("btn-off").disabled = !open;
+        $("status-dot").classList.toggle("connected", open);
+        $("status-text").textContent = open
+          ? `Connected to ${fy?.deviceModel || "unknown"} (${fy?.family || "?"})`
+          : "Disconnected";
       };
 
       $("btn-connect").addEventListener("click", async () => {
         try {
-          fy = await connectWeb({ filters: FEELTECH_USB_FILTERS, debug: true });
-          log("Connected:", fy.deviceModel || "(no model reported)", `family=${fy.family}`);
+          fy = await connectWeb({ filters: FEELTECH_USB_FILTERS, debug: false });
+          log("Connected:", fy.deviceModel || "(no model)", `family=${fy.family}`);
           setEnabled(true);
         } catch (err) {
           log("Connect failed:", err.message);
@@ -95,28 +519,219 @@
         setEnabled(false);
       });
 
-      $("btn-state").addEventListener("click", async () => {
-        const s = await fy.getChannelState(Channel.Main);
-        log("CH1:", s);
+      $("btn-device-info").addEventListener("click", async () => {
+        const info = `Model: ${fy.deviceModel} | ID: ${fy.deviceId} | Family: ${fy.family}`;
+        $("device-info").textContent = info;
+        log(info);
       });
 
-      $("btn-apply").addEventListener("click", async () => {
-        await fy.configureChannel(Channel.Main, {
-          waveform: $("wf").value,
-          frequencyHz: Number($("freq").value),
-          amplitudeV: Number($("amp").value),
-          offsetV: Number($("off").value),
+      async function applyChannel(ch) {
+        const prefix = ch === Channel.Main ? "ch1" : "ch2";
+        await fy.configureChannel(ch, {
+          waveform: $(`${prefix}-wf`).value,
+          frequencyHz: Number($(`${prefix}-freq`).value),
+          amplitudeV: Number($(`${prefix}-amp`).value),
+          offsetV: Number($(`${prefix}-offset`).value),
+          dutyCyclePct: Number($(`${prefix}-duty`).value),
+          phaseDeg: Number($(`${prefix}-phase`).value),
         });
-        log("Applied.");
+        log(`${prefix.toUpperCase()} configured.`);
+      }
+
+      $("btn-ch1-apply").addEventListener("click", () => applyChannel(Channel.Main));
+      $("btn-ch2-apply").addEventListener("click", () => applyChannel(Channel.Aux));
+
+      $("btn-ch1-on").addEventListener("click", async () => {
+        await fy.setOutput(Channel.Main, true);
+        log("CH1 ON");
+      });
+      $("btn-ch1-off").addEventListener("click", async () => {
+        await fy.setOutput(Channel.Main, false);
+        log("CH1 OFF");
+      });
+      $("btn-ch2-on").addEventListener("click", async () => {
+        await fy.setOutput(Channel.Aux, true);
+        log("CH2 ON");
+      });
+      $("btn-ch2-off").addEventListener("click", async () => {
+        await fy.setOutput(Channel.Aux, false);
+        log("CH2 OFF");
       });
 
-      $("btn-on").addEventListener("click", async () => {
-        await fy.setOutput(Channel.Main, true);
-        log("Output ON");
+      // Presets
+      const presets = {
+        "preset-sine-1k": { wf: "Sine", freq: 1000, amp: 3 },
+        "preset-square-1k": { wf: "Square", freq: 1000, amp: 3 },
+        "preset-triangle-1k": { wf: "Triangle", freq: 1000, amp: 3 },
+        "preset-ramp": { wf: "Ramp", freq: 1000, amp: 3 },
+        "preset-ecg": { wf: "ECG", freq: 1, amp: 3 },
+      };
+
+      for (const [id, cfg] of Object.entries(presets)) {
+        $(id).addEventListener("click", async () => {
+          $("ch1-wf").value = cfg.wf;
+          $("ch1-freq").value = cfg.freq;
+          $("ch1-amp").value = cfg.amp;
+          await applyChannel(Channel.Main);
+          log(`Preset applied: ${cfg.wf} @ ${cfg.freq} Hz`);
+        });
+      }
+
+      $("preset-sync").addEventListener("click", async () => {
+        $("ch2-wf").value = $("ch1-wf").value;
+        $("ch2-freq").value = $("ch1-freq").value;
+        $("ch2-amp").value = $("ch1-amp").value;
+        await applyChannel(Channel.Aux);
+        log("CH2 synced to CH1");
       });
-      $("btn-off").addEventListener("click", async () => {
-        await fy.setOutput(Channel.Main, false);
-        log("Output OFF");
+
+      // Modulation
+      $("btn-mod-apply").addEventListener("click", async () => {
+        const mode = $("mod-mode").value;
+        if (!mode) {
+          log("Modulation: off");
+          return;
+        }
+        await fy.setModulationMode(Number(mode));
+        await fy.setModulationSource(Number($("mod-source").value));
+        const val = Number($("mod-value").value);
+        if (mode === "4") await fy.setAmModulationRate(val);
+        else if (mode === "5") await fy.setFmDeviation(val);
+        else if (mode === "6") await fy.setPmPhaseOffset(val);
+        else if (mode === "3") await fy.setBurstCount(val);
+        log(`Modulation applied: mode=${mode}`);
+      });
+
+      $("btn-mod-trigger").addEventListener("click", async () => {
+        await fy.manualTrigger();
+        log("Manual trigger fired.");
+      });
+
+      // Sweep
+      $("btn-sweep-config").addEventListener("click", async () => {
+        await fy.configureSweep({
+          object: Number($("sweep-param").value),
+          start: Number($("sweep-start").value),
+          end: Number($("sweep-end").value),
+          timeSeconds: Number($("sweep-time").value),
+          mode: 0,
+          source: 0,
+        });
+        log("Sweep configured.");
+      });
+
+      $("btn-sweep-start").addEventListener("click", async () => {
+        await fy.startSweep();
+        log("Sweep started.");
+      });
+
+      $("btn-sweep-stop").addEventListener("click", async () => {
+        await fy.stopSweep();
+        log("Sweep stopped.");
+      });
+
+      // Measurement
+      $("btn-measure").addEventListener("click", async () => {
+        try {
+          const m = await fy.readMeasurement();
+          $("meas-freq").textContent = m.frequencyHz.toFixed(2) + " Hz";
+          $("meas-count").textContent = m.count.toString();
+          $("meas-period").textContent = m.periodNs.toFixed(0) + " ns";
+          $("meas-duty").textContent = m.dutyCyclePct.toFixed(1) + " %";
+          $("meas-pos").textContent = m.positivePulseNs.toFixed(0) + " ns";
+          $("meas-neg").textContent = m.negativePulseNs.toFixed(0) + " ns";
+          log("Measurement:", m);
+        } catch (err) {
+          log("Measurement failed:", err.message);
+        }
+      });
+
+      $("btn-counter-reset").addEventListener("click", async () => {
+        await fy.resetCounter();
+        log("Counter reset.");
+      });
+
+      // Arbitrary waveform
+      function generateArb(type) {
+        const samples = 8192;
+        const values = [];
+        for (let i = 0; i < samples; i++) {
+          const t = i / samples;
+          switch (type) {
+            case "sine": values.push(Math.sin(t * Math.PI * 2)); break;
+            case "square": values.push(t < 0.5 ? 1 : -1); break;
+            case "triangle": values.push(1 - Math.abs((t * 4) % 4 - 2)); break;
+            case "sawtooth": values.push((t * 2) % 2 - 1); break;
+            case "noise": values.push(Math.random() * 2 - 1); break;
+            case "stairstep": values.push((i / samples) * 2 - 1); break;
+            default: values.push(0);
+          }
+        }
+        return values;
+      }
+
+      function drawArb(values) {
+        const canvas = $("arb-canvas");
+        const ctx = canvas.getContext("2d");
+        const w = canvas.width = canvas.offsetWidth;
+        const h = canvas.height = canvas.offsetHeight;
+        ctx.fillStyle = "#1e1e1e";
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = "#4fc3f7";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const step = values.length / w;
+        for (let x = 0; x < w; x++) {
+          const idx = Math.floor(x * step);
+          const y = h / 2 - values[idx] * (h / 2 - 10);
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+
+      $("btn-arb-preview").addEventListener("click", () => {
+        const values = generateArb($("arb-type").value);
+        drawArb(values);
+        log("Arbitrary waveform preview generated.");
+      });
+
+      $("btn-arb-upload").addEventListener("click", async () => {
+        try {
+          const slot = Number($("arb-slot").value);
+          const values = generateArb($("arb-type").value);
+          log(`Uploading ${values.length} samples to slot ${slot}...`);
+          await fy.uploadWaveform(slot, values, { minValue: -1, maxValue: 1 });
+          log(`Slot ${slot} upload complete!`);
+        } catch (err) {
+          log("Upload failed:", err.message);
+        }
+      });
+
+      // System
+      $("btn-buzzer").addEventListener("click", async () => {
+        await fy.setBuzzer(true);
+        setTimeout(() => fy.setBuzzer(false), 200);
+        log("Buzzer beep.");
+      });
+
+      $("btn-save").addEventListener("click", async () => {
+        await fy.saveState(1);
+        log("Saved to slot 1.");
+      });
+
+      $("btn-load").addEventListener("click", async () => {
+        await fy.loadState(1);
+        log("Loaded from slot 1.");
+      });
+
+      $("btn-sync-freq").addEventListener("click", async () => {
+        await fy.enableSync(1);
+        log("Frequency sync enabled.");
+      });
+
+      $("btn-clear-log").addEventListener("click", () => {
+        $("log").textContent = "";
       });
     </script>
   </body>
