@@ -1,11 +1,11 @@
 /**
  * Burst: 10 kHz sine triggered by 1 kHz square, 3 cycles per burst.
  *
- *   pnpm example:mod:burst -- /dev/cu.wchusbserial110
+ *   npm run example:mod:burst -- [port]
  */
-import { connectNode, Channel } from "../../src/index.js";
+import { connectNode, Channel, ModulationMode, ModulationSource } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {
@@ -23,8 +23,8 @@ try {
     enabled: true,
   });
 
-  await fy.setModulationMode(0); // Burst
-  await fy.setModulationSource(0); // CH2 trigger
+  await fy.setModulationMode(ModulationMode.Burst);
+  await fy.setModulationSource(ModulationSource.CH2);
   await fy.setBurstCount(3);
 
   console.log("Burst: 10 kHz sine, 3 cycles per trigger, triggered by 1 kHz square on CH2");

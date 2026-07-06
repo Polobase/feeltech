@@ -3,11 +3,11 @@
  *
  * Connect both channels to an oscilloscope in XY mode to see the star.
  *
- *   pnpm example:star -- /dev/cu.wchusbserial110
+ *   npm run example:star -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const DATA_LENGTH = 8192;
 
 const POINTS: [number, number][] = [
@@ -36,8 +36,8 @@ function interpolateSegment(
 function interpolate(data: [number, number][]): [number, number][] {
   const lengths: number[] = [];
   for (let i = 0; i < data.length - 1; i++) {
-    const [x1, y1] = data[i];
-    const [x2, y2] = data[i + 1];
+    const [x1, y1] = data[i]!;
+    const [x2, y2] = data[i + 1]!;
     lengths.push(Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2));
   }
 
@@ -47,8 +47,8 @@ function interpolate(data: [number, number][]): [number, number][] {
 
   const out: [number, number][] = [];
   for (let i = 0; i < data.length - 1; i++) {
-    const [x1, y1] = data[i];
-    const [x2, y2] = data[i + 1];
+    const [x1, y1] = data[i]!;
+    const [x2, y2] = data[i + 1]!;
     out.push(...interpolateSegment(x1, y1, x2, y2, Math.floor(lengths[i]! / step)));
   }
   return out;

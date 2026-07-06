@@ -1,11 +1,11 @@
 /**
  * PSK: 1 kHz CMOS wave phase-shifted by 100 Hz square.
  *
- *   pnpm example:mod:psk -- /dev/cu.wchusbserial110
+ *   npm run example:mod:psk -- [port]
  */
-import { connectNode, Channel } from "../../src/index.js";
+import { connectNode, Channel, ModulationMode, ModulationSource } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {
@@ -23,8 +23,8 @@ try {
     enabled: true,
   });
 
-  await fy.setModulationMode(5); // PSK
-  await fy.setModulationSource(0); // CH2 trigger
+  await fy.setModulationMode(ModulationMode.PSK);
+  await fy.setModulationSource(ModulationSource.CH2);
 
   console.log("PSK: 1 kHz CMOS phase-shifted by 100 Hz square on CH2");
 } finally {

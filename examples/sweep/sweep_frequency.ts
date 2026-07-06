@@ -1,11 +1,11 @@
 /**
  * Sweep frequency from 1 kHz to 10 kHz over 10 seconds.
  *
- *   pnpm example:sweep:freq -- /dev/cu.wchusbserial110
+ *   npm run example:sweep:freq -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {

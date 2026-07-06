@@ -1,11 +1,11 @@
 /**
  * Wire-level debug probe — shows every byte exchanged with the device.
  *
- *   pnpm example:debug -- /dev/cu.wchusbserial110
+ *   npm run example:debug -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true, readTimeoutMs: 2000, readRetries: 2 });
 
 try {

@@ -47,6 +47,7 @@ interface PortInfo {
   productId?: string;
   serialNumber?: string;
   pnpId?: string;
+  locationId?: string;
 }
 
 let cachedSerialPort: { SerialPort: SerialPortCtor } | undefined;
@@ -87,7 +88,7 @@ export class NodeSerialTransport implements Transport {
         path: this.path,
         baudRate: options.baudRate,
         dataBits: options.dataBits ?? 8,
-        stopBits: options.stopBits ?? 1,
+        stopBits: options.stopBits ?? 2,
         parity: options.parity ?? "none",
         rtscts: options.flowControl === "hardware",
         xon: false,
@@ -190,3 +191,49 @@ export async function listPorts(): Promise<PortInfo[]> {
   };
   return mod.SerialPort.list();
 }
+
+/**
+ * USB vendor IDs of the UART bridge chips FeelTech generators ship with
+ * (CH340/CH341, CP210x, PL2303). Mirrors `FEELTECH_USB_FILTERS` on the web side.
+ */
+export const FEELTECH_USB_VENDOR_IDS = ["1a86", "10c4", "067b"] as const;
+
+/**
+ * List serial ports that look like a FeelTech generator (by USB vendor ID).
+ *
+ * The device path can change between USB ports (e.g. `wchusbserial110` vs
+ * `wchusbserial1220` on macOS), so prefer this over hardcoding a path.
+ *
+ * macOS specifics: `/dev/tty.*` paths are rewritten to their `/dev/cu.*`
+ * counterparts (the callout device is the right one for host-initiated
+ * connections), and adapters that appear twice — once via Apple's built-in
+ * CH340 driver (`usbserial-…`) and once via the WCH vendor driver
+ * (`wchusbserial…`) — are deduplicated by physical USB location.
+ */
+export async function findDevices(): Promise<PortInfo[]> {
+  const ports = await listPorts();
+  const candidates = ports
+    .filter(
+      (p) =>
+        p.vendorId !== undefined &&
+        (FEELTECH_USB_VENDOR_IDS as readonly string[]).includes(p.vendorId.toLowerCase()),
+    )
+    .map((p) =>
+      process.platform === "darwin" && p.path.startsWith("/dev/tty.")
+        ? { ...p, path: "/dev/cu." + p.path.slice("/dev/tty.".length) }
+        : p,
+    );
+  const byLocation = new Map<string, PortInfo>();
+  for (const p of candidates) {
+    const key = p.locationId ?? p.serialNumber ?? p.path;
+    const existing = byLocation.get(key);
+    const preferOverExisting =
+      existing !== undefined &&
+      p.path.includes("wchusbserial") &&
+      !existing.path.includes("wchusbserial");
+    if (!existing || preferOverExisting) byLocation.set(key, p);
+  }
+  return [...byLocation.values()];
+}
+
+export type { PortInfo };

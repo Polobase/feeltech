@@ -1,11 +1,15 @@
 /**
  * Send commands and print raw byte responses (hex + text).
  *
- *   pnpm example:raw:bytes -- /dev/cu.wchusbserial110
+ *   npm run example:raw:bytes -- [port]
  */
 import { SerialPort } from "serialport";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
+if (!path) {
+  console.error("Usage: pass the serial port path, e.g. /dev/cu.wchusbserial1220");
+  process.exit(1);
+}
 
 const port = new SerialPort({ path, baudRate: 115200, dataBits: 8, stopBits: 2, parity: "none", autoOpen: false });
 await new Promise<void>((res, rej) => port.open((e) => (e ? rej(e) : res())));

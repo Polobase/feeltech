@@ -2,11 +2,11 @@
  * Calibration probe: write a known value, read raw response,
  * print so we can derive the correct scaling factor.
  *
- *   pnpm example:calibrate -- /dev/cu.wchusbserial110
+ *   npm run example:calibrate -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: false });
 
 async function trial(label: string, set: () => Promise<void>, readCmd: string) {

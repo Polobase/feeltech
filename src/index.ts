@@ -42,6 +42,7 @@ export {
 } from "./types.js";
 export type {
   DeviceFamily,
+  FrequencyEncoding,
   FeelTechOptions,
   ChannelState,
   MeasurementResult,
@@ -60,6 +61,8 @@ export {
   resolveWaveform,
 } from "./waveforms.js";
 
+export { resampleWaveform, normalizeWaveform } from "./waveform-utils.js";
+
 export {
   buildCommand,
   encodeFrequencyHz,
@@ -70,27 +73,48 @@ export {
   decodeOffsetV,
   encodeDutyPct,
   decodeDutyPct,
+  decodeCounterDutyPct,
   encodePhaseDeg,
   decodePhaseDeg,
 } from "./protocol.js";
 
 import { FeelTech } from "./feeltech.js";
-import type { FeelTechOptions } from "./types.js";
+import { FeelTechError, type FeelTechOptions } from "./types.js";
 
 /**
  * Convenience helper: open a Node serial port and return a connected FeelTech instance.
  *
  * Requires the `serialport` peer dependency.
  *
- * @param path     Serial device path (e.g. "/dev/cu.wchusbserial110" or "COM3").
+ * When `path` is omitted, the port is auto-detected via {@link findDevices}
+ * (USB serial adapters with a CH340/CP210x/PL2303 vendor ID). Exactly one
+ * matching adapter must be present, otherwise a `FeelTechError` is thrown.
+ *
+ * @param path     Serial device path (e.g. "/dev/cu.wchusbserial1220" or "COM3"),
+ *                 or `undefined` to auto-detect.
  * @param options  Optional FeelTech options.
  */
 export async function connectNode(
-  path: string,
+  path?: string,
   options: FeelTechOptions = {},
 ): Promise<FeelTech> {
-  const { NodeSerialTransport } = await import("./transports/node.js");
-  const transport = new NodeSerialTransport(path);
+  const { NodeSerialTransport, findDevices } = await import("./transports/node.js");
+  let resolvedPath = path;
+  if (resolvedPath === undefined) {
+    const candidates = await findDevices();
+    if (candidates.length === 0) {
+      throw new FeelTechError(
+        "No FeelTech-like USB serial adapter found — pass the port path explicitly",
+      );
+    }
+    if (candidates.length > 1) {
+      throw new FeelTechError(
+        `Multiple candidate ports found (${candidates.map((c) => c.path).join(", ")}) — pass the port path explicitly`,
+      );
+    }
+    resolvedPath = candidates[0]!.path;
+  }
+  const transport = new NodeSerialTransport(resolvedPath);
   const fy = new FeelTech(transport, options);
   await fy.open();
   return fy;

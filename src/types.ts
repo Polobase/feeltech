@@ -1,84 +1,102 @@
 /**
+ * Enums are modelled as `as const` objects with literal-union types instead of
+ * TypeScript `enum`s: they behave identically at call sites (`Channel.Main`),
+ * but keep the library consumable under `isolatedModules`, `erasableSyntaxOnly`
+ * and Node's native type stripping, and stay tree-shakeable.
+ */
+
+/**
  * Channel identifiers. Channel 0 = main (CH1, "M" prefix in protocol).
  * Channel 1 = auxiliary / sub (CH2, "F" prefix in protocol).
  */
-export const enum Channel {
-  Main = 0,
-  Aux = 1,
-}
+export const Channel = {
+  Main: 0,
+  Aux: 1,
+} as const;
+export type Channel = (typeof Channel)[keyof typeof Channel];
 
 /** Modulation mode (FY6300/6600/6800/6900/8300). */
-export const enum ModulationMode {
-  ASK = 0,
-  FSK = 1,
-  PSK = 2,
-  Burst = 3,
-  AM = 4,
-  FM = 5,
-  PM = 6,
-}
+export const ModulationMode = {
+  ASK: 0,
+  FSK: 1,
+  PSK: 2,
+  Burst: 3,
+  AM: 4,
+  FM: 5,
+  PM: 6,
+} as const;
+export type ModulationMode = (typeof ModulationMode)[keyof typeof ModulationMode];
 
 /** Modulation source (FY63xx/68xx/69xx/83xx). */
-export const enum ModulationSource {
-  CH2 = 0,
-  ExternalAC = 1,
-  Manual = 2,
-  ExternalDC = 3,
-}
+export const ModulationSource = {
+  CH2: 0,
+  ExternalAC: 1,
+  Manual: 2,
+  ExternalDC: 3,
+} as const;
+export type ModulationSource = (typeof ModulationSource)[keyof typeof ModulationSource];
 
 /** Sweep parameter target. */
-export const enum SweepObject {
-  Frequency = 0,
-  Amplitude = 1,
-  Offset = 2,
-  DutyCycle = 3,
-}
+export const SweepObject = {
+  Frequency: 0,
+  Amplitude: 1,
+  Offset: 2,
+  DutyCycle: 3,
+} as const;
+export type SweepObject = (typeof SweepObject)[keyof typeof SweepObject];
 
 /** Sweep mode. */
-export const enum SweepMode {
-  Linear = 0,
-  Logarithmic = 1,
-}
+export const SweepMode = {
+  Linear: 0,
+  Logarithmic: 1,
+} as const;
+export type SweepMode = (typeof SweepMode)[keyof typeof SweepMode];
 
 /** Sweep control source. */
-export const enum SweepSource {
-  Time = 0,
-  VCO = 1,
-}
+export const SweepSource = {
+  Time: 0,
+  VCO: 1,
+} as const;
+export type SweepSource = (typeof SweepSource)[keyof typeof SweepSource];
 
 /** Counter / measurement gate time. */
-export const enum GateTime {
-  OneSecond = 0,
-  TenSeconds = 1,
-  HundredSeconds = 2,
-}
+export const GateTime = {
+  OneSecond: 0,
+  TenSeconds: 1,
+  HundredSeconds: 2,
+} as const;
+export type GateTime = (typeof GateTime)[keyof typeof GateTime];
 
 /** Measurement input coupling. */
-export const enum CouplingMode {
-  DC = 0,
-  AC = 1,
-}
+export const CouplingMode = {
+  DC: 0,
+  AC: 1,
+} as const;
+export type CouplingMode = (typeof CouplingMode)[keyof typeof CouplingMode];
 
 /** Channel attenuation. */
-export const enum Attenuation {
-  Zero = 0,
-  Minus20dB = 1,
-}
+export const Attenuation = {
+  Zero: 0,
+  Minus20dB: 1,
+} as const;
+export type Attenuation = (typeof Attenuation)[keyof typeof Attenuation];
 
 /** Synchronization parameter. */
-export const enum SyncObject {
-  Waveform = 0,
-  Frequency = 1,
-  Amplitude = 2,
-  Offset = 3,
-  DutyCycle = 4,
-}
+export const SyncObject = {
+  Waveform: 0,
+  Frequency: 1,
+  Amplitude: 2,
+  Offset: 3,
+  DutyCycle: 4,
+} as const;
+export type SyncObject = (typeof SyncObject)[keyof typeof SyncObject];
 
 /** Cascade role. */
-export const enum CascadeRole {
-  Master = 0,
-  Slave = 1,
-}
+export const CascadeRole = {
+  Master: 0,
+  Slave: 1,
+} as const;
+export type CascadeRole = (typeof CascadeRole)[keyof typeof CascadeRole];
 
 /**
  * Device family. Determines protocol details (baud rate, encoding, waveform table).
@@ -90,6 +108,14 @@ export type DeviceFamily =
   | "FY6900"
   | "Unknown";
 
+/**
+ * Wire encoding for the WMF/WFF frequency value.
+ * - `"uHz"`: 14-digit µHz integer (FY2300 default; also required by some older
+ *   FY6900 firmware revisions).
+ * - `"hz"`: decimal Hz, `%015.6f` (FY6900-family default).
+ */
+export type FrequencyEncoding = "hz" | "uHz";
+
 /** Connection options for the FeelTech device. */
 export interface FeelTechOptions {
   /**
@@ -99,6 +125,12 @@ export interface FeelTechOptions {
   family?: DeviceFamily;
   /** Serial baud rate. Defaults to family-specific value (9600 for FY2300, 115200 otherwise). */
   baudRate?: number;
+  /**
+   * Override the frequency wire encoding. Defaults to the family-specific
+   * encoding; set to `"uHz"` if an FY6900-family device with old firmware
+   * sets frequencies off by a factor of 10⁶.
+   */
+  frequencyEncoding?: FrequencyEncoding;
   /** Read timeout in ms. Default: 1500. */
   readTimeoutMs?: number;
   /** Number of retries for read commands. Default: 2. */

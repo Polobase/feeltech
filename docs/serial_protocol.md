@@ -187,10 +187,10 @@ RMW\n        → Read main waveform type
 |---------|---------|-------------|--------|
 | `RMW` | Integer | Current waveform code | See [Section 12](#12-waveform-type-tables) |
 | `RMF` | Integer (FY2300) / `ddddddd.dddddd` (FY6900) | Current frequency | FY2300: Hz integer; FY6900: Hz with 6 decimals |
-| `RMA` | Integer | Current amplitude | integer / 100 = V (FY2300), integer / 1000 = V (FY6900) |
+| `RMA` | Integer | Current amplitude | integer / 100 = V (FY2300), integer / **10000** = V (FY6900 — the PDF claims /1000, real firmware uses /10000; see [Section 13](#13-parameter-encoding-reference)) |
 | `RMO` | Integer | Current offset | See [Section 13](#13-parameter-encoding-reference) |
-| `RMD` | Integer | Current duty cycle | integer / 10 = % (e.g. 689 = 68.9%) |
-| `RMP` | Integer | Current phase | integer / 10 = degrees (FY6900, e.g. 2189 = 218.9°); integer = degrees (FY2300) |
+| `RMD` | Integer | Current duty cycle | integer / 10 = % (FY2300, e.g. 689 = 68.9%); integer / **1000** = % (FY6900, e.g. 50000 = 50.0%) |
+| `RMP` | Integer | Current phase | integer / **1000** = degrees (FY6900, e.g. 90000 = 90.000°); integer = degrees (FY2300) |
 | `RMT` | Integer | Current attenuation | 0 = 0 dB, 1 = −20 dB |
 | `RMN` | Integer | Output status | 0 = off, 255 = on |
 | `RPM` | Integer | Current trigger mode | See [Section 8](#8-modulation-commands) |
@@ -378,7 +378,7 @@ Controls the measurement window duration, which determines frequency resolution.
 | `RCT` | Read signal period | Integer in nanoseconds |
 | `RC+` | Read positive pulse width | Integer in nanoseconds |
 | `RC-` | Read negative pulse width | Integer in nanoseconds |
-| `RCD` | Read duty cycle of measured signal | Integer; integer / 10 = % (e.g. 668 = 66.8%) |
+| `RCD` | Read duty cycle of measured signal | Integer; integer / 10 = % on **all families** (e.g. 668 = 66.8%) — unlike the channel readback `RMD` |
 
 ---
 

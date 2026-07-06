@@ -1,11 +1,15 @@
 /**
  * Low-level dump: send commands, hex-print every byte that comes back.
  *
- *   pnpm example:raw:dump -- /dev/cu.wchusbserial110
+ *   npm run example:raw:dump -- [port]
  */
 import { NodeSerialTransport } from "../../src/transports/node.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
+if (!path) {
+  console.error("Usage: pass the serial port path, e.g. /dev/cu.wchusbserial1220");
+  process.exit(1);
+}
 const t = new NodeSerialTransport(path);
 await t.open({ baudRate: 115200, dataBits: 8, stopBits: 2, parity: "none" });
 

@@ -60,7 +60,7 @@ export class WebSerialTransport implements Transport {
     await this.port.open({
       baudRate: options.baudRate,
       dataBits: options.dataBits ?? 8,
-      stopBits: options.stopBits ?? 1,
+      stopBits: options.stopBits ?? 2,
       parity: options.parity ?? "none",
       flowControl: options.flowControl ?? "none",
     });

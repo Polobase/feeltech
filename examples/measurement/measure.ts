@@ -4,11 +4,11 @@
  * The first readMeasurement() call switches the device into measurement mode
  * and returns bogus values. Wait the gate time, then read again for real data.
  *
- *   pnpm example:measure /dev/tty.wchusbserial110
+ *   npm run example:measure -- [port]
  */
 import { connectNode } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: false });
 
 try {

@@ -1,11 +1,11 @@
 /**
  * Sweep duty cycle from 10 % to 90 % over 2 seconds.
  *
- *   pnpm example:sweep:duty -- /dev/cu.wchusbserial110
+ *   npm run example:sweep:duty -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {

@@ -1,11 +1,11 @@
 /**
  * Demo mode — continuously cycles through examples for demonstration purposes.
  *
- *   pnpm example:demo -- /dev/cu.wchusbserial110
+ *   npm run example:demo -- [port]
  */
 import { connectNode, Channel } from "../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: false });
 
 const DELAY_MS = 3000;

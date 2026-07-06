@@ -4,7 +4,7 @@
  * Reference: docs/serial_protocol.md (FY2300 Rev 1.2, FY6900 Rev 1.8).
  */
 
-import type { DeviceFamily } from "./types.js";
+import type { DeviceFamily, FrequencyEncoding } from "./types.js";
 
 /** Command terminator used by all FY series devices. */
 export const TERMINATOR = "\n";
@@ -23,9 +23,17 @@ export function padInt(value: number | bigint, width: number): string {
  *
  * - FY2300: 14-digit µHz integer (e.g. 10 kHz -> "00010000000000")
  * - FY6900 family: %015.6f Hz with leading zeros (e.g. 10 kHz -> "00010000.000000")
+ *
+ * `encoding` overrides the family default — some older FY6900 firmware
+ * revisions expect the 14-digit µHz form instead of decimal Hz.
  */
-export function encodeFrequencyHz(family: DeviceFamily, hz: number): string {
-  if (family === "FY2300") {
+export function encodeFrequencyHz(
+  family: DeviceFamily,
+  hz: number,
+  encoding?: FrequencyEncoding,
+): string {
+  const enc = encoding ?? (family === "FY2300" ? "uHz" : "hz");
+  if (enc === "uHz") {
     const microHz = BigInt(Math.round(hz * 1_000_000));
     return padInt(microHz, 14);
   }
@@ -118,6 +126,16 @@ export function encodeDutyPct(pct: number): string {
 export function decodeDutyPct(family: DeviceFamily, raw: string): number {
   const n = Number(raw.trim());
   return family === "FY2300" ? n / 10 : n / 1000;
+}
+
+/**
+ * Decode the frequency counter's measured duty cycle (RCD).
+ *
+ * Unlike the channel duty readback (RMD/RFD), the counter reports
+ * raw / 10 = percent on all families (e.g. 668 → 66.8%).
+ */
+export function decodeCounterDutyPct(raw: string): number {
+  return Number(raw.trim()) / 10;
 }
 
 /** Encode phase in degrees for WMP/WFP. */

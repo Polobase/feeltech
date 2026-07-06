@@ -1,11 +1,11 @@
 /**
  * AM modulation: 2 kHz sine modulated by 150 Hz triangle.
  *
- *   pnpm example:mod:am -- /dev/cu.wchusbserial110
+ *   npm run example:mod:am -- [port]
  */
-import { connectNode, Channel } from "../../src/index.js";
+import { connectNode, Channel, ModulationMode, ModulationSource } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {
@@ -23,8 +23,8 @@ try {
     enabled: true,
   });
 
-  await fy.setModulationMode(1); // AM
-  await fy.setModulationSource(0); // CH2 trigger
+  await fy.setModulationMode(ModulationMode.AM);
+  await fy.setModulationSource(ModulationSource.CH2);
   await fy.setAmModulationRate(90);
 
   console.log("AM: 2 kHz sine modulated by 150 Hz triangle at 90 % depth");

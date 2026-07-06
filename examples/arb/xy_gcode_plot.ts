@@ -1,7 +1,7 @@
 /**
  * XY G-code Plot — reads a simple G-code file and creates an XY plot on CH1/CH2.
  *
- *   pnpm example:gcode -- /dev/cu.wchusbserial110 examples/gcode/star.gcd
+ *   npm run example:gcode -- [port] examples/gcode/star.gcd
  *
  * The G-code parser supports G01 (linear move) commands with X, Y, Z (pen up/down).
  * The path is interpolated to 8192 points and output as arbitrary waveforms.
@@ -9,7 +9,7 @@
 import { connectNode, Channel } from "../../src/index.js";
 import { readFileSync } from "fs";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const filename = process.argv[3] ?? "examples/gcode/star.gcd";
 const DATA_LENGTH = 8192;
 
@@ -29,14 +29,15 @@ function parseGcodeLine(line: string): Record<string, number> {
 
 function readGcode(content: string): Point[] {
   const data: Point[] = [];
-  let x = 0, y = 0, penDown = true;
+  let x = 0, y = 0;
+  let penDown: boolean = true;
 
   for (const line of content.split("\n")) {
     const d = parseGcodeLine(line);
     if (!("G" in d)) continue;
     if (Math.round(d["G"]!) !== 1) continue;
 
-    const newPenDown = "Z" in d ? Math.round(d["Z"]!) === 0 : penDown;
+    const newPenDown: boolean = "Z" in d ? Math.round(d["Z"]!) === 0 : penDown;
     if ("X" in d) x = d["X"]!;
     if ("Y" in d) y = d["Y"]!;
 

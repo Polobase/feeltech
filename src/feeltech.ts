@@ -10,6 +10,7 @@ import {
   cleanResponse,
   decodeAmplitudeV,
   decodeBool,
+  decodeCounterDutyPct,
   decodeDutyPct,
   decodeFrequencyHz,
   decodeInt,
@@ -23,6 +24,7 @@ import {
 } from "./protocol.js";
 import {
   Channel,
+  SweepObject,
   type Attenuation,
   type CascadeRole,
   type ChannelState,
@@ -31,17 +33,22 @@ import {
   FeelTechError,
   FeelTechProtocolError,
   type FeelTechOptions,
+  type FrequencyEncoding,
   type GateTime,
   type MeasurementResult,
   type ModulationMode,
   type ModulationSource,
   type SweepConfig,
   type SweepMode,
-  type SweepObject,
   type SweepSource,
   type SyncObject,
   type WaveformDescriptor,
 } from "./types.js";
+import {
+  FY2300_ARBITRARY_COUNT,
+  FY6900_ARBITRARY_COUNT,
+} from "./waveforms.js";
+import { normalizeWaveform, resampleWaveform } from "./waveform-utils.js";
 import {
   listWaveforms as listWaveformsFor,
   resolveWaveform,
@@ -49,14 +56,40 @@ import {
 } from "./waveforms.js";
 import type { Transport } from "./transport.js";
 
+/** Throw unless the value is a real channel (guards untyped JS callers). */
+function assertChannel(channel: Channel): void {
+  if (channel !== Channel.Main && channel !== Channel.Aux) {
+    throw new FeelTechError(
+      `Invalid channel ${channel} — use Channel.Main (0) or Channel.Aux (1)`,
+    );
+  }
+}
+
+/** Throw unless the value is a finite number. */
+function assertFinite(name: string, value: number): void {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new FeelTechError(`${name} must be a finite number, got ${value}`);
+  }
+}
+
+/** Throw unless min <= value <= max. */
+function assertRange(name: string, value: number, min: number, max: number): void {
+  assertFinite(name, value);
+  if (value < min || value > max) {
+    throw new FeelTechError(`${name} must be between ${min} and ${max}, got ${value}`);
+  }
+}
+
 /**
  * Choose write/read command codes based on channel.
  * The protocol uses "WM" / "RM" for the main channel, "WF" / "RF" for the auxiliary.
  */
 function chCode(channel: Channel, suffix: string): string {
+  assertChannel(channel);
   return (channel === Channel.Main ? "WM" : "WF") + suffix;
 }
 function chReadCode(channel: Channel, suffix: string): string {
+  assertChannel(channel);
   return (channel === Channel.Main ? "RM" : "RF") + suffix;
 }
 
@@ -66,6 +99,7 @@ export class FeelTech {
   > & {
     family: DeviceFamily;
     baudRate?: number;
+    frequencyEncoding?: FrequencyEncoding;
     logger: (message: string, ...args: unknown[]) => void;
   };
   private commandLock = Promise.resolve();
@@ -81,6 +115,9 @@ export class FeelTech {
       commandDelayMs: options.commandDelayMs ?? 0,
       debug: options.debug ?? false,
       ...(options.baudRate !== undefined ? { baudRate: options.baudRate } : {}),
+      ...(options.frequencyEncoding !== undefined
+        ? { frequencyEncoding: options.frequencyEncoding }
+        : {}),
       logger:
         options.logger ??
         ((msg: string, ...rest: unknown[]) => console.log("[feeltech]", msg, ...rest)),
@@ -269,7 +306,9 @@ export class FeelTech {
 
   /** Set output frequency in Hz. */
   async setFrequency(channel: Channel, hz: number): Promise<void> {
-    const value = encodeFrequencyHz(this.detectedFamily, hz);
+    assertFinite("frequency", hz);
+    if (hz < 0) throw new FeelTechError(`frequency must be >= 0 Hz, got ${hz}`);
+    const value = encodeFrequencyHz(this.detectedFamily, hz, this.opts.frequencyEncoding);
     await this.sendWrite(chCode(channel, "F"), value);
   }
 
@@ -281,6 +320,8 @@ export class FeelTech {
 
   /** Set output amplitude in volts (peak-to-peak). */
   async setAmplitude(channel: Channel, volts: number): Promise<void> {
+    assertFinite("amplitude", volts);
+    if (volts < 0) throw new FeelTechError(`amplitude must be >= 0 V, got ${volts}`);
     const value = encodeAmplitudeV(this.detectedFamily, volts);
     await this.sendWrite(chCode(channel, "A"), value);
   }
@@ -293,6 +334,7 @@ export class FeelTech {
 
   /** Set DC offset in volts. */
   async setOffset(channel: Channel, volts: number): Promise<void> {
+    assertFinite("offset", volts);
     const value = encodeOffsetV(this.detectedFamily, volts);
     await this.sendWrite(chCode(channel, "O"), value);
   }
@@ -305,6 +347,7 @@ export class FeelTech {
 
   /** Set duty cycle percentage (0..100). */
   async setDutyCycle(channel: Channel, pct: number): Promise<void> {
+    assertRange("duty cycle", pct, 0, 100);
     await this.sendWrite(chCode(channel, "D"), encodeDutyPct(pct));
   }
 
@@ -316,6 +359,7 @@ export class FeelTech {
 
   /** Set phase in degrees (0..360). */
   async setPhase(channel: Channel, degrees: number): Promise<void> {
+    assertRange("phase", degrees, 0, 360);
     await this.sendWrite(chCode(channel, "P"), encodePhaseDeg(this.detectedFamily, degrees));
   }
 
@@ -409,20 +453,21 @@ export class FeelTech {
   async setModulationMode(mode: ModulationMode): Promise<void> {
     await this.sendWrite("WPF", mode);
   }
-  async getModulationMode(): Promise<number> {
-    return decodeInt(await this.sendRead("RPF"));
+  async getModulationMode(): Promise<ModulationMode> {
+    return decodeInt(await this.sendRead("RPF")) as ModulationMode;
   }
 
   /** Set the modulation source. */
   async setModulationSource(source: ModulationSource): Promise<void> {
     await this.sendWrite("WPM", source);
   }
-  async getModulationSource(): Promise<number> {
-    return decodeInt(await this.sendRead("RPM"));
+  async getModulationSource(): Promise<ModulationSource> {
+    return decodeInt(await this.sendRead("RPM")) as ModulationSource;
   }
 
   /** Set burst pulse count (max 1048575). */
   async setBurstCount(count: number): Promise<void> {
+    assertRange("burst count", count, 1, 1048575);
     await this.sendWrite("WPN", Math.round(count).toString());
   }
   async getBurstCount(): Promise<number> {
@@ -475,19 +520,36 @@ export class FeelTech {
    *
    * @param slot    Arbitrary waveform slot (1-based). FY2300: 1-16, FY6900: 1-64.
    * @param values  Float values to upload. Automatically scaled to 14-bit.
-   * @param options Optional: min/max for scaling, sample count.
+   * @param options Optional: min/max for scaling, sample count, and the
+   *                `resample`/`normalize` conveniences from waveform-utils.
    */
   async uploadWaveform(
     slot: number,
     values: number[],
-    options: { minValue?: number; maxValue?: number; sampleCount?: number } = {},
+    options: {
+      minValue?: number;
+      maxValue?: number;
+      sampleCount?: number;
+      /** Linearly resample `values` to `sampleCount` points first. */
+      resample?: boolean;
+      /** Scale `values` symmetrically into −1…+1 first. */
+      normalize?: boolean;
+    } = {},
   ): Promise<void> {
     const minValue = options.minValue ?? -1.0;
     const maxValue = options.maxValue ?? 1.0;
     const sampleCount = options.sampleCount ?? 8192;
+    if (options.normalize) values = normalizeWaveform(values);
+    if (options.resample && values.length !== sampleCount) {
+      values = resampleWaveform(values, sampleCount);
+    }
 
-    if (slot < 1) {
-      throw new FeelTechError(`Waveform slot must be >= 1, got ${slot}`);
+    const maxSlot =
+      this.detectedFamily === "FY2300" ? FY2300_ARBITRARY_COUNT : FY6900_ARBITRARY_COUNT;
+    if (!Number.isInteger(slot) || slot < 1 || slot > maxSlot) {
+      throw new FeelTechError(
+        `Waveform slot must be an integer 1..${maxSlot} (${this.detectedFamily}), got ${slot}`,
+      );
     }
 
     if (values.length !== sampleCount) {
@@ -507,11 +569,14 @@ export class FeelTech {
       }
     }
 
-    // Convert float values to 14-bit raw integers.
+    // Convert float values to 14-bit raw integers (full scale maps to 16383).
     const rawValues = new Uint16Array(sampleCount);
     const range = maxValue - minValue;
+    if (!(range > 0)) {
+      throw new FeelTechError(`maxValue must be greater than minValue (got ${minValue}..${maxValue})`);
+    }
     for (let i = 0; i < sampleCount; i++) {
-      let v = Math.floor(((values[i]! - minValue) * 16384) / range);
+      let v = Math.round(((values[i]! - minValue) / range) * 16383);
       if (v < 0) v = 0;
       if (v > 16383) v = 16383;
       rawValues[i] = v;
@@ -589,8 +654,8 @@ export class FeelTech {
   async setGateTime(g: GateTime): Promise<void> {
     await this.sendWrite("WCG", g);
   }
-  async getGateTime(): Promise<number> {
-    return decodeInt(await this.sendRead("RCG"));
+  async getGateTime(): Promise<GateTime> {
+    return decodeInt(await this.sendRead("RCG")) as GateTime;
   }
   async setMeasurementCoupling(c: CouplingMode): Promise<void> {
     await this.sendWrite("WCC", c);
@@ -617,12 +682,12 @@ export class FeelTech {
     return decodeInt(await this.sendRead("RC-"));
   }
   async readMeasuredDutyPct(): Promise<number> {
-    return decodeDutyPct(this.detectedFamily, await this.sendRead("RCD"));
+    return decodeCounterDutyPct(await this.sendRead("RCD"));
   }
 
   /** Read all measurement values at once. */
   async readMeasurement(): Promise<MeasurementResult> {
-    const gateTime = (await this.getGateTime()) as GateTime;
+    const gateTime = await this.getGateTime();
     const [rawFreq, count, periodNs, posNs, negNs, dutyRaw] = await Promise.all([
       this.sendRead("RCF").then(decodeInt),
       this.sendRead("RCC").then(decodeInt),
@@ -637,7 +702,7 @@ export class FeelTech {
       periodNs,
       positivePulseNs: posNs,
       negativePulseNs: negNs,
-      dutyCyclePct: decodeDutyPct(this.detectedFamily, dutyRaw),
+      dutyCyclePct: decodeCounterDutyPct(dutyRaw),
       gateTime,
     };
   }
@@ -681,16 +746,25 @@ export class FeelTech {
     if (cfg.source !== undefined) await this.setSweepSource(cfg.source);
   }
 
+  /**
+   * Format a sweep start/end value for SST/SEN.
+   *
+   * FY6900-family firmware stores sweep offsets with a +10 V bias
+   * (see docs/serial_protocol.md §10) — applied automatically here,
+   * matching the fygen reference implementation.
+   */
   private formatSweepValue(value: number, object: SweepObject): string {
     switch (object) {
-      case 0:
-        return value.toFixed(1); // frequency Hz
-      case 1:
-        return value.toFixed(3); // amplitude V
-      case 2:
-        return value.toFixed(3); // offset V
-      case 3:
-        return value.toFixed(1); // duty %
+      case SweepObject.Frequency:
+        return value.toFixed(1); // Hz
+      case SweepObject.Amplitude:
+        return value.toFixed(3); // V
+      case SweepObject.Offset: {
+        const biased = this.detectedFamily === "FY2300" ? value : value + 10;
+        return biased.toFixed(3); // V
+      }
+      case SweepObject.DutyCycle:
+        return value.toFixed(1); // %
       default:
         return value.toString();
     }
@@ -700,13 +774,15 @@ export class FeelTech {
   // System settings
   // ──────────────────────────────────────────────────────────────────────────
 
-  /** Save current parameters to a numbered slot (1..). */
+  /** Save current parameters to a numbered slot (1..99). */
   async saveState(slot: number): Promise<void> {
-    await this.sendWrite("USN", slot.toString().padStart(2, "0"));
+    assertRange("state slot", slot, 1, 99);
+    await this.sendWrite("USN", Math.round(slot).toString().padStart(2, "0"));
   }
-  /** Load parameters from a numbered slot. */
+  /** Load parameters from a numbered slot (1..99). */
   async loadState(slot: number): Promise<void> {
-    await this.sendWrite("ULN", slot.toString().padStart(2, "0"));
+    assertRange("state slot", slot, 1, 99);
+    await this.sendWrite("ULN", Math.round(slot).toString().padStart(2, "0"));
   }
   async enableSync(o: SyncObject): Promise<void> {
     await this.sendWrite("USA", o);
@@ -726,8 +802,8 @@ export class FeelTech {
   async setCascadeRole(role: CascadeRole): Promise<void> {
     await this.sendWrite("UMS", role);
   }
-  async getCascadeRole(): Promise<number> {
-    return decodeInt(await this.sendRead("RMS"));
+  async getCascadeRole(): Promise<CascadeRole> {
+    return decodeInt(await this.sendRead("RMS")) as CascadeRole;
   }
   async setUplink(on: boolean): Promise<void> {
     await this.sendWrite(this.detectedFamily === "FY2300" ? "UML" : "UUL", on ? 1 : 0);
@@ -751,6 +827,7 @@ export class FeelTech {
 
   /** List all waveforms known to the configured family for the given channel. */
   listWaveforms(channel: Channel): WaveformDescriptor[] {
+    assertChannel(channel);
     return listWaveformsFor(this.detectedFamily, channel);
   }
 

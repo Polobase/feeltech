@@ -16,7 +16,10 @@ export interface SerialOpenOptions {
   baudRate: number;
   /** Defaults to 8. */
   dataBits?: 7 | 8;
-  /** Defaults to 1. FY6900 family REQUIRES 2. */
+  /**
+   * Defaults to 2 (required by the FY6900 family; harmless on transmit for
+   * 1-stop-bit devices). `FeelTech.open()` always sets this explicitly per family.
+   */
   stopBits?: 1 | 2;
   /** Defaults to "none". */
   parity?: "none" | "even" | "odd";

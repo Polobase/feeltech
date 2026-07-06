@@ -1,11 +1,11 @@
 /**
  * FSK: triangle wave alternating between 1 kHz and 2 kHz each second.
  *
- *   pnpm example:mod:fsk -- /dev/cu.wchusbserial110
+ *   npm run example:mod:fsk -- [port]
  */
-import { connectNode, Channel } from "../../src/index.js";
+import { connectNode, Channel, ModulationMode, ModulationSource } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {
@@ -23,8 +23,8 @@ try {
     enabled: true,
   });
 
-  await fy.setModulationMode(3); // FSK
-  await fy.setModulationSource(0); // CH2 trigger
+  await fy.setModulationMode(ModulationMode.FSK);
+  await fy.setModulationSource(ModulationSource.CH2);
   await fy.setFskFrequency(2000);
 
   console.log("FSK: triangle 1 kHz / 2 kHz toggled by 1 Hz square on CH2");

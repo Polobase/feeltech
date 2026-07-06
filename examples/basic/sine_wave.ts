@@ -2,11 +2,11 @@
  * Basic example: configure CH1 to a 1 kHz sine wave at 3.3 Vpp, enable output,
  * wait 2 seconds, then disable output.
  *
- *   pnpm example:basic -- /dev/cu.wchusbserial110
+ *   npm run example:basic -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: false });
 
 try {

@@ -1,7 +1,7 @@
 /**
  * List available serial ports on this machine.
  *
- *   pnpm example:list
+ *   npm run example:list
  */
 import { listPorts } from "../../src/transports/node.js";
 

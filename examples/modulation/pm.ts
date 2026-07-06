@@ -1,11 +1,11 @@
 /**
  * PM modulation: 1 kHz sine modulated by 500 Hz square.
  *
- *   pnpm example:mod:pm -- /dev/cu.wchusbserial110
+ *   npm run example:mod:pm -- [port]
  */
-import { connectNode, Channel } from "../../src/index.js";
+import { connectNode, Channel, ModulationMode, ModulationSource } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {
@@ -23,8 +23,8 @@ try {
     enabled: true,
   });
 
-  await fy.setModulationMode(4); // PM
-  await fy.setModulationSource(0); // CH2 trigger
+  await fy.setModulationMode(ModulationMode.PM);
+  await fy.setModulationSource(ModulationSource.CH2);
   await fy.setPmPhaseOffset(90);
 
   console.log("PM: 1 kHz sine modulated by 500 Hz square, phase offset 90 deg");

@@ -1,11 +1,11 @@
 /**
  * Display device information and current state for both channels.
  *
- *   pnpm example:info -- /dev/cu.wchusbserial110
+ *   npm run example:info -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 console.log(`Connecting to ${path}...`);
 
 const fy = await connectNode(path, { debug: false });

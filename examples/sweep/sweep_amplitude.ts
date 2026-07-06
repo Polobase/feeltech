@@ -1,11 +1,11 @@
 /**
  * Sweep amplitude from 1 V to 5 V over 2 seconds.
  *
- *   pnpm example:sweep:amp -- /dev/cu.wchusbserial110
+ *   npm run example:sweep:amp -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: true });
 
 try {

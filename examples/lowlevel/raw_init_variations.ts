@@ -1,15 +1,20 @@
 /**
  * Variation: try different init / timing scenarios and observe.
  *
- *   pnpm example:raw:init -- /dev/cu.wchusbserial110
+ *   npm run example:raw:init -- [port]
  */
 import { NodeSerialTransport } from "../../src/transports/node.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
+if (!path) {
+  console.error("Usage: pass the serial port path, e.g. /dev/cu.wchusbserial1220");
+  process.exit(1);
+}
+const portPath: string = path;
 
 async function trial(label: string, fn: (t: NodeSerialTransport) => Promise<void>) {
   console.log(`\n=== ${label} ===`);
-  const t = new NodeSerialTransport(path);
+  const t = new NodeSerialTransport(portPath);
   await t.open({ baudRate: 115200, dataBits: 8, stopBits: 2, parity: "none" });
   try {
     await fn(t);

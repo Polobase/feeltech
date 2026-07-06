@@ -1,11 +1,11 @@
 /**
  * Cycle through all available waveforms on CH1.
  *
- *   pnpm example:allwaves -- /dev/cu.wchusbserial110
+ *   npm run example:allwaves -- [port]
  */
 import { connectNode, Channel } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: false });
 
 try {

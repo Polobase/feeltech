@@ -1,36 +1,58 @@
 {
   "name": "feeltech",
   "version": "0.1.0",
-  "description": "Comprehensive TypeScript library for FeelTech / FeelElec FY-series arbitrary waveform generators (FY2300, FY6300, FY6600, FY6800, FY6900, FY8300). Works in Node.js (serialport) and browsers (Web Serial API).",
+  "description": "TypeScript library and CLI for FeelTech / FeelElec FY-series arbitrary waveform generators (FY2300, FY6300, FY6600, FY6800, FY6900, FY8300). Works in Node.js (serialport) and browsers (Web Serial API).",
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
-  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "feeltech": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./node": {
       "types": "./dist/transports/node.d.ts",
-      "import": "./dist/transports/node.js"
+      "default": "./dist/transports/node.js"
     },
     "./web": {
       "types": "./dist/transports/web.d.ts",
-      "import": "./dist/transports/web.js"
-    }
+      "default": "./dist/transports/web.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "src",
     "README.md",
+    "CHANGELOG.md",
     "docs/serial_protocol.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mahapo/feeltech.git"
+  },
+  "homepage": "https://github.com/mahapo/feeltech#readme",
+  "bugs": {
+    "url": "https://github.com/mahapo/feeltech/issues"
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.dev.json",
+    "test": "node --import tsx/esm --test test/*.test.ts",
+    "test:hw": "node --import tsx/esm test/hw/verify-quirks.ts",
+    "check:package": "publint && attw --pack . --profile esm-only",
+    "prepublishOnly": "npm run clean && npm run build && npm test && npm run check:package",
+    "example:web": "npm run build && npx --yes serve .",
     "example:list": "node --import tsx/esm examples/basic/list_ports.ts",
     "example:simple": "node --import tsx/esm examples/basic/simple.ts",
     "example:basic": "node --import tsx/esm examples/basic/sine_wave.ts",
@@ -83,7 +105,7 @@
   "author": "Manuel Haller Polo",
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "browser": {
     "serialport": false,
@@ -98,13 +120,16 @@
     }
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
     "@types/node": "^20.0.0",
     "@types/w3c-web-serial": "^1.0.6",
+    "publint": "^0.3.12",
     "serialport": "^13.0.0",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": ["@serialport/bindings-cpp"]
+  "allowScripts": {
+    "@serialport/bindings-cpp@13.0.0": true,
+    "esbuild@0.28.1": true
   }
 }

@@ -3,11 +3,11 @@
  *
  * The first readPulseCount() call switches the device into counter mode.
  *
- *   pnpm example:counter /dev/tty.wchusbserial110
+ *   npm run example:counter -- [port]
  */
 import { connectNode } from "../../src/index.js";
 
-const path = process.argv[2] ?? "/dev/cu.wchusbserial110";
+const path = process.argv[2];
 const fy = await connectNode(path, { debug: false });
 
 try {
