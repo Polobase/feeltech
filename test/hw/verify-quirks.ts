@@ -99,15 +99,21 @@ try {
   await fy.setOffset(Channel.Main, 0);
 
   const valid = readings.filter((v) => Number.isFinite(v));
+  const spread = valid.length > 0 ? Math.max(...valid) - Math.min(...valid) : 0;
   const avg = valid.reduce((a, b) => a + b, 0) / Math.max(valid.length, 1);
-  if (valid.length === 0) {
-    console.log("\n→ RMO not readable during sweep — probe INCONCLUSIVE (check device display instead).");
+  if (valid.length === 0 || spread < 0.1) {
+    // Verified on the FY6300-60M: RMO reports the programmed offset, not the
+    // live swept value, so a flat reading proves nothing about the bias.
+    console.log(
+      "\n→ RMO does not track the live sweep — probe INCONCLUSIVE; watch the device display",
+    );
+    console.log(
+      "  (or a scope) during the sweep: −10…−5 V means the +10 V bias is required, 0…5 V means it isn't.",
+    );
   } else if (avg < -4) {
     console.log(`\n→ avg ${avg.toFixed(2)} V ≈ −10…−5 range: +10 V bias IS required on this family.`);
-  } else if (avg >= -1 && avg <= 6) {
-    console.log(`\n→ avg ${avg.toFixed(2)} V within 0…5 range: +10 V bias NOT required on this device.`);
   } else {
-    console.log(`\n→ avg ${avg.toFixed(2)} V — UNCLEAR, check the device display during the sweep.`);
+    console.log(`\n→ avg ${avg.toFixed(2)} V within 0…5 range: +10 V bias NOT required on this device.`);
   }
 } finally {
   try {

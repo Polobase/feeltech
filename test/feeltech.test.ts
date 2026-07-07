@@ -301,6 +301,18 @@ describe("write verification", () => {
     assert.ok(!mock.writes.some((w) => w.startsWith("RMF")));
   });
 
+  it("tolerates DDS frequency quantization in the readback", async () => {
+    const mock = new MockTransport({
+      family: "FY6900",
+      // Real FY6300-60M behaviour: the device rounds to its DDS resolution.
+      responder: (cmd) => (cmd === "RMF" ? "00012345.612464" : undefined),
+    });
+    const fy = new FeelTech(mock);
+    await fy.open();
+    await fy.setFrequency(Channel.Main, 12345.678); // must not throw
+    assert.equal(mock.writes.filter((w) => w.startsWith("WMF")).length, 1);
+  });
+
   it("skips verification for frequency when the encoding is overridden", async () => {
     const mock = new MockTransport({ family: "FY6900" });
     const fy = new FeelTech(mock, { frequencyEncoding: "uHz" });

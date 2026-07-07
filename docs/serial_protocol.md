@@ -794,6 +794,12 @@ When sweeping offset on FY6900, add 10 V to the start and end values (firmware i
 
 Additionally, system-mode commands (sweep `SBE`, sync `USA`/`USD`, uplink `UUL`) can leave the panel in a state where subsequent channel parameter writes (`WMF`, `WMA`, …) are **silently dropped** — the write is acked but never applied — until the device recovers. A robust client must read the value back after writing and retry on mismatch; the `feeltech` library does this automatically for all parameter setters (`verifyWrites`, on by default). Also note that slot 1 auto-loads at power-on — avoid using it for throwaway saves — and that the modulation mode (`WPF`) resets when the serial port is closed and reopened.
 
+### DDS frequency quantization (verified on FY6300-60M)
+
+The device stores frequency as a DDS tuning word, so the applied value is quantized to roughly clock/2³² ≈ 0.065 Hz: writing `12345.678000` reads back as `12345.612464`. Clients comparing set vs. read values need a tolerance of ~0.1 Hz.
+
+Model note: the FY6300-60M accepts waveform codes only up to 97 (`Arbitrary61`); codes 98–100 (`Arbitrary62`–`64` in the FY6900 family table) are clamped to the last valid code.
+
 ### Channel 2 waveform code offset
 
 The FY6900 auxiliary channel (CH2) is missing the **Adj-Pulse** waveform (code 5 on CH1). All waveforms from code 5 onwards are shifted down by 1 on CH2. Always use the CH2-specific waveform table when constructing `WFW` commands.

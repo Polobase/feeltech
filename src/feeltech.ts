@@ -368,8 +368,10 @@ export class FeelTech {
       await this.sendWrite(chCode(channel, "F"), value);
       return;
     }
-    // FY2300 reads frequency back as integer Hz; FY6900 with 6 decimals.
-    const tolerance = this.tol(1, 1e-5 + hz * 1e-9);
+    // FY2300 reads frequency back as integer Hz. FY6900-family devices
+    // quantize to the DDS resolution (~0.065 Hz = clock/2³², measured on an
+    // FY6300-60M: set 12345.678 → reads 12345.612464), so allow 0.1 Hz.
+    const tolerance = this.tol(1, 0.1 + hz * 1e-9);
     await this.setVerified(
       `set frequency ${hz} Hz`,
       () => this.sendWrite(chCode(channel, "F"), value),
