@@ -444,6 +444,8 @@ A full protocol reference, derived from the official FeelTech PDFs and corrected
 
 **FY6900 sets a wildly wrong frequency (off by ~10⁶)** — some older FY6900 firmware expects the frequency as a 14-digit µHz integer instead of decimal Hz. Pass `frequencyEncoding: "uHz"` in the options.
 
+**A parameter write seems ignored** — on some firmware (observed on the FY6300-60M) the device occasionally acks a write without applying it, especially right after sweep or sync-mode commands. For critical automation, read the value back (`getFrequency()`, …) and retry on mismatch. Save slots (`saveState`) snapshot the *applied* state, so pause ~1.5 s after parameter writes before saving.
+
 **Web Serial: "No port selected"** — `navigator.serial.requestPort()` must be called from a user gesture (click handler).
 
 ---
