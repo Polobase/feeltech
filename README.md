@@ -1,6 +1,6 @@
 # feeltech
 
-[![CI](https://github.com/mahapo/feeltech/actions/workflows/ci.yml/badge.svg)](https://github.com/mahapo/feeltech/actions/workflows/ci.yml)
+[![CI](https://github.com/Polobase/feeltech/actions/workflows/ci.yml/badge.svg)](https://github.com/Polobase/feeltech/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/feeltech)](https://www.npmjs.com/package/feeltech)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

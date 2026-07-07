@@ -37,11 +37,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mahapo/feeltech.git"
+    "url": "git+https://github.com/Polobase/feeltech.git"
   },
-  "homepage": "https://github.com/mahapo/feeltech#readme",
+  "homepage": "https://github.com/Polobase/feeltech#readme",
   "bugs": {
-    "url": "https://github.com/mahapo/feeltech/issues"
+    "url": "https://github.com/Polobase/feeltech/issues"
   },
   "scripts": {
     "build": "tsc",

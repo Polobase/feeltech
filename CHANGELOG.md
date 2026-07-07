@@ -33,4 +33,4 @@ First published release.
 - Full-scale arbitrary waveform samples now map exactly to the 14-bit maximum (16383).
 - Transports default to 2 stop bits (FY6900-family requirement) when used directly.
 
-[0.1.0]: https://github.com/mahapo/feeltech/releases/tag/v0.1.0
+[0.1.0]: https://github.com/Polobase/feeltech/releases/tag/v0.1.0
