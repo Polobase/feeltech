@@ -5,6 +5,7 @@ import { FeelTech } from "../src/feeltech.js";
 import {
   Channel,
   FeelTechError,
+  FeelTechVerifyError,
   GateTime,
   ModulationMode,
   SweepMode,
@@ -69,14 +70,27 @@ describe("channel commands (wire format)", () => {
     assert.ok(mock.writes.includes("WFA3.3000\n"));
   });
 
-  it("round-trips values through the mock state", async () => {
+  it("round-trips values through the mock state (FY6900 scalings)", async () => {
     const { fy } = await openFy6900();
     await fy.setFrequency(Channel.Main, 2500);
-    assert.equal(await fy.getFrequency(Channel.Main), 2500);
+    await fy.setAmplitude(Channel.Main, 3.3);
+    await fy.setOffset(Channel.Main, -1.5);
     await fy.setDutyCycle(Channel.Main, 25);
-    // Mock echoes the written "25.0"; decode is /1000 on FY6900 — the real
-    // device rescales, so only check the write side here.
+    await fy.setPhase(Channel.Main, 90);
+    assert.equal(await fy.getFrequency(Channel.Main), 2500);
+    assert.equal(await fy.getAmplitude(Channel.Main), 3.3);
+    assert.equal(await fy.getOffset(Channel.Main), -1.5);
+    assert.equal(await fy.getDutyCycle(Channel.Main), 25);
+    assert.equal(await fy.getPhase(Channel.Main), 90);
     assert.equal(await fy.getOutput(Channel.Main), false);
+  });
+
+  it("round-trips values through the mock state (FY2300 scalings)", async () => {
+    const { fy } = await openFy2300();
+    await fy.setAmplitude(Channel.Main, 3.3);
+    await fy.setOffset(Channel.Main, -1);
+    assert.equal(await fy.getAmplitude(Channel.Main), 3.3);
+    assert.equal(await fy.getOffset(Channel.Main), -1);
   });
 });
 
@@ -246,7 +260,53 @@ describe("command serialization", () => {
       fy.setAmplitude(Channel.Main, 1),
       fy.setOutput(Channel.Main, true),
     ]);
-    const lines = mock.writes.slice(before);
-    assert.deepEqual(lines, ["WMF00001000.000000\n", "WMA1.0000\n", "WMN1\n"]);
+    const writes = mock.writes.slice(before).filter((l) => l.startsWith("WM"));
+    assert.deepEqual(writes, ["WMF00001000.000000\n", "WMA1.0000\n", "WMN1\n"]);
+  });
+});
+
+describe("write verification", () => {
+  it("retries when the firmware drops a write, then succeeds", async () => {
+    let drops = 1;
+    const mock = new MockTransport({
+      family: "FY6900",
+      // Ack the first WMF without applying it — exactly the observed quirk.
+      responder: (cmd) => (cmd.startsWith("WMF") && drops-- > 0 ? [""] : undefined),
+    });
+    const fy = new FeelTech(mock);
+    await fy.open();
+    await fy.setFrequency(Channel.Main, 1000);
+    assert.equal(mock.writes.filter((w) => w.startsWith("WMF")).length, 2);
+    assert.equal(await fy.getFrequency(Channel.Main), 1000);
+  });
+
+  it("throws FeelTechVerifyError when the write is never applied", async () => {
+    const mock = new MockTransport({
+      family: "FY6900",
+      responder: (cmd) => (cmd.startsWith("WMA") ? [""] : undefined),
+    });
+    const fy = new FeelTech(mock);
+    await fy.open();
+    await assert.rejects(fy.setAmplitude(Channel.Main, 3.3), FeelTechVerifyError);
+    // 1 attempt + writeRetries (default 2)
+    assert.equal(mock.writes.filter((w) => w.startsWith("WMA")).length, 3);
+  });
+
+  it("skips the readback when verifyWrites is false", async () => {
+    const mock = new MockTransport({ family: "FY6900" });
+    const fy = new FeelTech(mock, { verifyWrites: false });
+    await fy.open();
+    await fy.setFrequency(Channel.Main, 1000);
+    assert.ok(mock.writes.includes("WMF00001000.000000\n"));
+    assert.ok(!mock.writes.some((w) => w.startsWith("RMF")));
+  });
+
+  it("skips verification for frequency when the encoding is overridden", async () => {
+    const mock = new MockTransport({ family: "FY6900" });
+    const fy = new FeelTech(mock, { frequencyEncoding: "uHz" });
+    await fy.open();
+    await fy.setFrequency(Channel.Main, 1000);
+    assert.ok(mock.writes.includes("WMF00001000000000\n"));
+    assert.ok(!mock.writes.some((w) => w.startsWith("RMF")));
   });
 });

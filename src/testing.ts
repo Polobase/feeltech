@@ -154,11 +154,52 @@ export class MockTransport implements Transport {
     }
 
     // Write command: remember the value so the matching read returns it
-    // (WMF… → RMF, USN… → RSN, SST… → RST).
+    // (WMF… → RMF, USN… → RSN, SST… → RST), converted to the device's
+    // readback format so verified writes round-trip like on real hardware.
     if (cmd.length >= 3) {
-      this.state.set("R" + cmd.slice(1, 3), cmd.slice(3));
+      this.state.set("R" + cmd.slice(1, 3), this.toReadbackFormat(cmd.slice(0, 3), cmd.slice(3)));
     }
     // FY6900 family acks writes with a bare newline; FY2300 stays silent.
     if (this.family !== "FY2300") this.respond("");
+  }
+
+  /**
+   * Convert a written channel-parameter value into the raw string the real
+   * device would return for the matching read command (scaled integers,
+   * bias/two's-complement offsets — see docs/serial_protocol.md §13).
+   */
+  private toReadbackFormat(code: string, value: string): string {
+    const isChannelParam = code.startsWith("WM") || code.startsWith("WF");
+    if (!isChannelParam) return value;
+    const suffix = code[2]!;
+    const num = Number(value);
+    if (this.family === "FY2300") {
+      switch (suffix) {
+        case "F": // 14-digit µHz in → integer Hz out
+          return String(Math.round(num / 1_000_000));
+        case "A": // volts in → V×100 out
+          return String(Math.round(num * 100));
+        case "O": // volts in → bias-1000 out
+          return String(1000 + Math.round(num * 100));
+        case "D": // percent in → %×10 out
+          return String(Math.round(num * 10));
+        default: // W, P (integer), N, T…
+          return value;
+      }
+    }
+    switch (suffix) {
+      case "A": // volts in → V×10000 out
+        return String(Math.round(num * 10000));
+      case "O": { // volts in → signed 32-bit ×1000 out (two's complement)
+        const raw = Math.round(num * 1000);
+        return String(raw < 0 ? raw + 0x1_0000_0000 : raw);
+      }
+      case "D": // percent in → %×1000 out
+        return String(Math.round(num * 1000));
+      case "P": // degrees in → deg×1000 out
+        return String(Math.round(num * 1000));
+      default: // F (same %015.6f format), W, N…
+        return value;
+    }
   }
 }

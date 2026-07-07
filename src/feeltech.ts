@@ -32,6 +32,7 @@ import {
   type DeviceFamily,
   FeelTechError,
   FeelTechProtocolError,
+  FeelTechVerifyError,
   type FeelTechOptions,
   type FrequencyEncoding,
   type GateTime,
@@ -95,7 +96,10 @@ function chReadCode(channel: Channel, suffix: string): string {
 
 export class FeelTech {
   private opts: Required<
-    Pick<FeelTechOptions, "readTimeoutMs" | "readRetries" | "commandDelayMs" | "debug">
+    Pick<
+      FeelTechOptions,
+      "readTimeoutMs" | "readRetries" | "commandDelayMs" | "debug" | "verifyWrites" | "writeRetries"
+    >
   > & {
     family: DeviceFamily;
     baudRate?: number;
@@ -112,6 +116,8 @@ export class FeelTech {
       family: options.family ?? "Unknown",
       readTimeoutMs: options.readTimeoutMs ?? 1500,
       readRetries: options.readRetries ?? 2,
+      verifyWrites: options.verifyWrites ?? true,
+      writeRetries: options.writeRetries ?? 2,
       commandDelayMs: options.commandDelayMs ?? 0,
       debug: options.debug ?? false,
       ...(options.baudRate !== undefined ? { baudRate: options.baudRate } : {}),
@@ -282,6 +288,47 @@ export class FeelTech {
     });
   }
 
+  /**
+   * Send a write and verify it was applied by reading the value back,
+   * retrying on mismatch. FY firmware occasionally acks a write without
+   * applying it (see docs/serial_protocol.md, known quirks) — verification
+   * makes setters reliable. Skipped when `verifyWrites: false`.
+   */
+  private async setVerified<T>(
+    describe: string,
+    write: () => Promise<void>,
+    read: () => Promise<T>,
+    matches: (got: T) => boolean,
+  ): Promise<void> {
+    if (!this.opts.verifyWrites) {
+      await write();
+      return;
+    }
+    let got: T | undefined;
+    const attempts = this.opts.writeRetries + 1;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await write();
+      try {
+        got = await read();
+      } catch (err) {
+        this.log(`!! verify read failed for ${describe} (attempt ${attempt}):`, err);
+        continue;
+      }
+      if (matches(got)) return;
+      this.log(`!! ${describe}: device reports ${String(got)} (attempt ${attempt}) — retrying`);
+    }
+    throw new FeelTechVerifyError(
+      `${describe} was not applied by the device after ${attempts} attempts ` +
+        `(readback: ${String(got)}). The firmware may have clamped the value or ` +
+        `be in a state that ignores writes; pass verifyWrites: false to skip verification.`,
+    );
+  }
+
+  /** Tolerance for verifying a voltage/percent/degree readback, per family. */
+  private tol(fy2300: number, fy6900: number): number {
+    return this.detectedFamily === "FY2300" ? fy2300 : fy6900;
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // Channel parameters (CH1 = Main, CH2 = Aux)
   // ──────────────────────────────────────────────────────────────────────────
@@ -289,7 +336,12 @@ export class FeelTech {
   /** Set output waveform by code, name, or "Arbitrary<n>". */
   async setWaveform(channel: Channel, waveform: number | string): Promise<void> {
     const code = resolveWaveform(this.detectedFamily, channel, waveform);
-    await this.sendWrite(chCode(channel, "W"), code.toString().padStart(2, "0"));
+    await this.setVerified(
+      `set waveform ${waveform}`,
+      () => this.sendWrite(chCode(channel, "W"), code.toString().padStart(2, "0")),
+      () => this.getWaveform(channel),
+      (got) => got === code,
+    );
   }
 
   /** Read the current waveform code. */
@@ -309,7 +361,21 @@ export class FeelTech {
     assertFinite("frequency", hz);
     if (hz < 0) throw new FeelTechError(`frequency must be >= 0 Hz, got ${hz}`);
     const value = encodeFrequencyHz(this.detectedFamily, hz, this.opts.frequencyEncoding);
-    await this.sendWrite(chCode(channel, "F"), value);
+    // With a frequencyEncoding override the firmware's readback format is
+    // unknown (that's why the override exists), so skip verification.
+    const familyDefault: FrequencyEncoding = this.detectedFamily === "FY2300" ? "uHz" : "hz";
+    if (this.opts.frequencyEncoding !== undefined && this.opts.frequencyEncoding !== familyDefault) {
+      await this.sendWrite(chCode(channel, "F"), value);
+      return;
+    }
+    // FY2300 reads frequency back as integer Hz; FY6900 with 6 decimals.
+    const tolerance = this.tol(1, 1e-5 + hz * 1e-9);
+    await this.setVerified(
+      `set frequency ${hz} Hz`,
+      () => this.sendWrite(chCode(channel, "F"), value),
+      () => this.getFrequency(channel),
+      (got) => Math.abs(got - hz) <= tolerance,
+    );
   }
 
   /** Read output frequency in Hz. */
@@ -323,7 +389,12 @@ export class FeelTech {
     assertFinite("amplitude", volts);
     if (volts < 0) throw new FeelTechError(`amplitude must be >= 0 V, got ${volts}`);
     const value = encodeAmplitudeV(this.detectedFamily, volts);
-    await this.sendWrite(chCode(channel, "A"), value);
+    await this.setVerified(
+      `set amplitude ${volts} V`,
+      () => this.sendWrite(chCode(channel, "A"), value),
+      () => this.getAmplitude(channel),
+      (got) => Math.abs(got - volts) <= this.tol(0.01, 1e-4),
+    );
   }
 
   /** Read output amplitude in volts. */
@@ -336,7 +407,12 @@ export class FeelTech {
   async setOffset(channel: Channel, volts: number): Promise<void> {
     assertFinite("offset", volts);
     const value = encodeOffsetV(this.detectedFamily, volts);
-    await this.sendWrite(chCode(channel, "O"), value);
+    await this.setVerified(
+      `set offset ${volts} V`,
+      () => this.sendWrite(chCode(channel, "O"), value),
+      () => this.getOffset(channel),
+      (got) => Math.abs(got - volts) <= this.tol(0.01, 1e-3),
+    );
   }
 
   /** Read DC offset in volts. */
@@ -348,7 +424,12 @@ export class FeelTech {
   /** Set duty cycle percentage (0..100). */
   async setDutyCycle(channel: Channel, pct: number): Promise<void> {
     assertRange("duty cycle", pct, 0, 100);
-    await this.sendWrite(chCode(channel, "D"), encodeDutyPct(pct));
+    await this.setVerified(
+      `set duty cycle ${pct} %`,
+      () => this.sendWrite(chCode(channel, "D"), encodeDutyPct(pct)),
+      () => this.getDutyCycle(channel),
+      (got) => Math.abs(got - pct) <= 0.05,
+    );
   }
 
   /** Read duty cycle percentage. */
@@ -360,7 +441,17 @@ export class FeelTech {
   /** Set phase in degrees (0..360). */
   async setPhase(channel: Channel, degrees: number): Promise<void> {
     assertRange("phase", degrees, 0, 360);
-    await this.sendWrite(chCode(channel, "P"), encodePhaseDeg(this.detectedFamily, degrees));
+    const tolerance = this.tol(1, 0.005);
+    await this.setVerified(
+      `set phase ${degrees}°`,
+      () => this.sendWrite(chCode(channel, "P"), encodePhaseDeg(this.detectedFamily, degrees)),
+      () => this.getPhase(channel),
+      // Wrap-aware: some firmware stores 360° as 0°.
+      (got) => {
+        const diff = Math.abs(got - degrees) % 360;
+        return diff <= tolerance || Math.abs(diff - 360) <= tolerance;
+      },
+    );
   }
 
   /** Read phase in degrees. */
@@ -371,7 +462,12 @@ export class FeelTech {
 
   /** Enable or disable the channel output. */
   async setOutput(channel: Channel, enabled: boolean): Promise<void> {
-    await this.sendWrite(chCode(channel, "N"), enabled ? "1" : "0");
+    await this.setVerified(
+      `set output ${enabled ? "on" : "off"}`,
+      () => this.sendWrite(chCode(channel, "N"), enabled ? "1" : "0"),
+      () => this.getOutput(channel),
+      (got) => got === enabled,
+    );
   }
 
   /** Read whether the channel output is enabled. */
@@ -451,7 +547,12 @@ export class FeelTech {
 
   /** Set the main wave modulation mode. */
   async setModulationMode(mode: ModulationMode): Promise<void> {
-    await this.sendWrite("WPF", mode);
+    await this.setVerified(
+      `set modulation mode ${mode}`,
+      () => this.sendWrite("WPF", mode),
+      () => this.getModulationMode(),
+      (got) => got === mode,
+    );
   }
   async getModulationMode(): Promise<ModulationMode> {
     return decodeInt(await this.sendRead("RPF")) as ModulationMode;
@@ -459,7 +560,12 @@ export class FeelTech {
 
   /** Set the modulation source. */
   async setModulationSource(source: ModulationSource): Promise<void> {
-    await this.sendWrite("WPM", source);
+    await this.setVerified(
+      `set modulation source ${source}`,
+      () => this.sendWrite("WPM", source),
+      () => this.getModulationSource(),
+      (got) => got === source,
+    );
   }
   async getModulationSource(): Promise<ModulationSource> {
     return decodeInt(await this.sendRead("RPM")) as ModulationSource;

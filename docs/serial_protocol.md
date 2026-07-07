@@ -792,7 +792,7 @@ When sweeping offset on FY6900, add 10 V to the start and end values (firmware i
 
 `USN` snapshots the device's *applied* state, not the last bytes received: saving too soon after parameter writes captures a mix of old and new values (parameters apply with variable latency). Wait ≥1.5 s after the last write before `USN`, and ≈1.5 s after `ULN` before reading parameters back.
 
-Additionally, repeated sync toggles (`USA`/`USD`) can leave the panel in a state where subsequent channel parameter writes (`WMF`, `WMA`, …) are **silently dropped** — the write is acked but never applied — until the device recovers. For critical automation, read the value back after writing and retry on mismatch. Also note that slot 1 auto-loads at power-on — avoid using it for throwaway saves — and that the modulation mode (`WPF`) resets when the serial port is closed and reopened.
+Additionally, system-mode commands (sweep `SBE`, sync `USA`/`USD`, uplink `UUL`) can leave the panel in a state where subsequent channel parameter writes (`WMF`, `WMA`, …) are **silently dropped** — the write is acked but never applied — until the device recovers. A robust client must read the value back after writing and retry on mismatch; the `feeltech` library does this automatically for all parameter setters (`verifyWrites`, on by default). Also note that slot 1 auto-loads at power-on — avoid using it for throwaway saves — and that the modulation mode (`WPF`) resets when the serial port is closed and reopened.
 
 ### Channel 2 waveform code offset
 

@@ -39,6 +39,7 @@ export {
   FeelTechError,
   FeelTechTimeoutError,
   FeelTechProtocolError,
+  FeelTechVerifyError,
 } from "./types.js";
 export type {
   DeviceFamily,

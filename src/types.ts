@@ -135,6 +135,17 @@ export interface FeelTechOptions {
   readTimeoutMs?: number;
   /** Number of retries for read commands. Default: 2. */
   readRetries?: number;
+  /**
+   * Verify parameter writes by reading the value back and retrying on
+   * mismatch. FY firmware occasionally acknowledges a write without applying
+   * it (observed on a real FY6300-60M, typically after sweep/sync/uplink
+   * commands); verification makes setters reliable at the cost of one read
+   * per write. If the device still reports a different value after all
+   * retries, a {@link FeelTechVerifyError} is thrown. Default: true.
+   */
+  verifyWrites?: boolean;
+  /** Retries per verified write when the readback doesn't match. Default: 2. */
+  writeRetries?: number;
   /** Inter-command delay in ms (some firmwares need a pause). Default: 0. */
   commandDelayMs?: number;
   /** Enable verbose logging of all sent/received bytes. */
@@ -213,5 +224,17 @@ export class FeelTechProtocolError extends FeelTechError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
     this.name = "FeelTechProtocolError";
+  }
+}
+
+/**
+ * Thrown when a verified write keeps reading back a different value —
+ * either the firmware dropped the write repeatedly or it clamped the value
+ * (e.g. a frequency beyond the device's range).
+ */
+export class FeelTechVerifyError extends FeelTechError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = "FeelTechVerifyError";
   }
 }

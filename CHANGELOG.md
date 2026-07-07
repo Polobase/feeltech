@@ -20,6 +20,7 @@ First published release.
 - `MockTransport` test double under `feeltech/testing`, reproducing real response framing including the binary upload flow.
 - `frequencyEncoding: "hz" | "uHz"` option for older FY6900 firmware that expects µHz frequency values.
 - Parameter validation (channel, duty, phase, frequency, amplitude, burst count, memory/arb slots) throwing typed `FeelTechError`s.
+- Verified writes: every parameter setter reads the value back and retries dropped writes (FY firmware occasionally acks without applying, e.g. after sweep/sync/uplink commands); throws `FeelTechVerifyError` if the device never applies the value. Configurable via `verifyWrites` (default on) and `writeRetries`.
 - Unit test suite (node:test) and GitHub Actions CI (Node 20/22/24, publint + arethetypeswrong package checks).
 - Runnable examples for every feature area plus a browser control panel (`npm run example:web`) and a hardware smoke test (`npm run test:hw`).
 

@@ -21,6 +21,7 @@ The protocol implementation has been verified empirically against a real **FY630
 - **Port auto-detection** — `connectNode()` without a path finds the generator's USB serial adapter (CH340/CP210x/PL2303) automatically; the device path changing between USB ports stops mattering.
 - **Auto-detection of the device family** (FY2300 vs. FY6300/6900 family) by querying `UMO`. Encoding/decoding is automatically chosen for the detected family.
 - **Robust framing** with retry logic — handles trailing empty newlines, slow responses, and timing quirks transparently.
+- **Verified writes.** FY firmware occasionally acks a write without applying it; every parameter setter reads the value back and retries automatically (opt out with `verifyWrites: false`).
 - **Strict types.** Every command is typed; channel state and measurement results are exposed as plain TypeScript interfaces. Enums are `as const` objects, so the library works under `isolatedModules` and Node's type stripping.
 - **Testable without hardware** — a `MockTransport` ships under `feeltech/testing`.
 - **No build step required for the library** — ships pre-built ESM with `.d.ts` files.
@@ -276,6 +277,8 @@ const fy = await connectNode(undefined, {
   frequencyEncoding: "hz",  // "hz" | "uHz" — see Troubleshooting
   readTimeoutMs: 1500,      // per-read timeout
   readRetries: 2,           // retries on no-response
+  verifyWrites: true,       // read setters back and retry dropped writes (default)
+  writeRetries: 2,          // retries per verified write
   commandDelayMs: 0,        // pause after every command
   debug: true,              // log every TX/RX line
   logger: (m, ...a) => console.log("[fy]", m, ...a),
@@ -444,7 +447,7 @@ A full protocol reference, derived from the official FeelTech PDFs and corrected
 
 **FY6900 sets a wildly wrong frequency (off by ~10⁶)** — some older FY6900 firmware expects the frequency as a 14-digit µHz integer instead of decimal Hz. Pass `frequencyEncoding: "uHz"` in the options.
 
-**A parameter write seems ignored** — on some firmware (observed on the FY6300-60M) the device occasionally acks a write without applying it, especially right after sweep or sync-mode commands. For critical automation, read the value back (`getFrequency()`, …) and retry on mismatch. Save slots (`saveState`) snapshot the *applied* state, so pause ~1.5 s after parameter writes before saving.
+**`FeelTechVerifyError: … was not applied by the device`** — on some firmware (observed on the FY6300-60M) the device occasionally acks a write without applying it, especially right after sweep or sync-mode commands. The library retries automatically (`writeRetries`); this error means the value still didn't stick after all attempts — usually because the firmware clamped an out-of-range value (e.g. a frequency beyond the device's maximum). Pass `verifyWrites: false` to send writes blind. Note that save slots (`saveState`) snapshot the *applied* state, so pause briefly after parameter writes before saving.
 
 **Web Serial: "No port selected"** — `navigator.serial.requestPort()` must be called from a user gesture (click handler).
 

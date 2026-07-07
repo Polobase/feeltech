@@ -79,21 +79,10 @@ console.log("X range:", Math.min(...xValues).toFixed(4), "to", Math.max(...xValu
 console.log("Y range:", Math.min(...yValues).toFixed(4), "to", Math.max(...yValues).toFixed(4));
 
 const fy = await connectNode(path, { debug: false });
-
-// The firmware occasionally acks a write without applying it (see
-// docs/serial_protocol.md) — verify the switch away from the arb slots.
-async function switchAwayFromArb(channel: Channel): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await fy.setWaveform(channel, "Sine");
-    if ((await fy.getWaveformName(channel)) === "Sine") return;
-  }
-  throw new Error("Could not switch waveform away from the arbitrary slot");
-}
-
 try {
   // Switch away from arbitrary waveforms before uploading.
-  await switchAwayFromArb(Channel.Main);
-  await switchAwayFromArb(Channel.Aux);
+  await fy.setWaveform(Channel.Main, "Sine");
+  await fy.setWaveform(Channel.Aux, "Sine");
 
   console.log("Uploading X data to arb1...");
   await fy.uploadWaveform(1, xValues, { minValue: -1, maxValue: 1 });

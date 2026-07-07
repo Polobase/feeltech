@@ -143,21 +143,10 @@ const xValues = data.map((p) => p.x);
 const yValues = data.map((p) => p.y);
 
 const fy = await connectNode(path, { debug: false });
-
-// The firmware occasionally acks a write without applying it (see
-// docs/serial_protocol.md) — verify the switch away from the arb slots.
-async function switchAwayFromArb(channel: Channel): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await fy.setWaveform(channel, "Sine");
-    if ((await fy.getWaveformName(channel)) === "Sine") return;
-  }
-  throw new Error("Could not switch waveform away from the arbitrary slot");
-}
-
 try {
   // Switch away from arbitrary waveforms before uploading.
-  await switchAwayFromArb(Channel.Main);
-  await switchAwayFromArb(Channel.Aux);
+  await fy.setWaveform(Channel.Main, "Sine");
+  await fy.setWaveform(Channel.Aux, "Sine");
   await fy.setOutput(Channel.Main, false);
   await fy.setOutput(Channel.Aux, false);
 
