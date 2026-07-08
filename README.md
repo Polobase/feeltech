@@ -34,13 +34,9 @@ The protocol implementation has been verified empirically against a real **FY630
 npm install feeltech
 ```
 
-For Node.js, also install the optional peer dependency:
+The Node serial backend ([`serialport`](https://serialport.io)) is an **optional dependency** — npm installs it automatically, so the library and the `npx feeltech` CLI work out of the box. If its native build ever fails on an exotic platform (or you install with `--omit=optional`), Node usage will tell you to `npm install serialport` explicitly.
 
-```bash
-npm install serialport
-```
-
-`serialport` is **not** required in the browser (the bundler will see the `browser` field in `package.json` and replace it with `false`).
+`serialport` is **not** required in the browser (the bundler will see the `browser` field in `package.json` and replace it with `false`, and it never enters your bundle).
 
 ---
 

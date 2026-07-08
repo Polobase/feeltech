@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-07-08
+
+### Fixed
+
+- `npx feeltech` works out of the box: `serialport` moved from an optional *peer* dependency (which npx never installs) to an **optional dependency**, so it is installed automatically for Node/CLI usage while staying out of browser bundles.
+- `listPorts()`/`findDevices()` now raise the same friendly "serialport is not installed" `FeelTechError` as the transport instead of a raw `ERR_MODULE_NOT_FOUND`.
+
 ## [0.1.0] — 2026-07-06
 
 First published release.
@@ -33,4 +40,5 @@ First published release.
 - Full-scale arbitrary waveform samples now map exactly to the 14-bit maximum (16383).
 - Transports default to 2 stop bits (FY6900-family requirement) when used directly.
 
+[0.1.1]: https://github.com/Polobase/feeltech/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Polobase/feeltech/releases/tag/v0.1.0

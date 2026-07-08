@@ -50,21 +50,24 @@ interface PortInfo {
   locationId?: string;
 }
 
-let cachedSerialPort: { SerialPort: SerialPortCtor } | undefined;
+type SerialPortModule = {
+  SerialPort: SerialPortCtor & { list(): Promise<PortInfo[]> };
+};
 
-async function loadSerialPort(): Promise<{ SerialPort: SerialPortCtor }> {
+let cachedSerialPort: SerialPortModule | undefined;
+
+async function loadSerialPort(): Promise<SerialPortModule> {
   if (cachedSerialPort) return cachedSerialPort;
   try {
     // Use eval-style import so bundlers don't try to resolve at build time.
     const moduleName = "serialport";
-    const mod = (await import(/* @vite-ignore */ moduleName)) as {
-      SerialPort: SerialPortCtor;
-    };
+    const mod = (await import(/* @vite-ignore */ moduleName)) as SerialPortModule;
     cachedSerialPort = mod;
     return mod;
   } catch (err) {
     throw new FeelTechError(
-      "The 'serialport' peer dependency is not installed. Run `npm install serialport`.",
+      "The 'serialport' package is not installed (its optional install may have " +
+        "been skipped or failed to build). Run `npm install serialport`.",
       err,
     );
   }
@@ -185,11 +188,8 @@ export class NodeSerialTransport implements Transport {
  * List available serial ports. Useful for picking a port when the path is unknown.
  */
 export async function listPorts(): Promise<PortInfo[]> {
-  const moduleName = "serialport";
-  const mod = (await import(/* @vite-ignore */ moduleName)) as {
-    SerialPort: { list(): Promise<PortInfo[]> };
-  };
-  return mod.SerialPort.list();
+  const { SerialPort } = await loadSerialPort();
+  return SerialPort.list();
 }
 
 /**

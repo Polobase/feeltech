@@ -1,6 +1,6 @@
 {
   "name": "feeltech",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript library and CLI for FeelTech / FeelElec FY-series arbitrary waveform generators (FY2300, FY6300, FY6600, FY6800, FY6900, FY8300). Works in Node.js (serialport) and browsers (Web Serial API).",
   "type": "module",
   "sideEffects": false,
@@ -111,13 +111,8 @@
     "serialport": false,
     "./dist/transports/node.js": false
   },
-  "peerDependencies": {
+  "optionalDependencies": {
     "serialport": "^12.0.0 || ^13.0.0"
-  },
-  "peerDependenciesMeta": {
-    "serialport": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
