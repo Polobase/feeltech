@@ -41,8 +41,10 @@ export const SPOOKY2_DEVICES: readonly DeviceDescriptor[] = [
     label: "Gen X Pro",
     verified: false,
     note:
-      "Physical output is gated behind a challenge/response handshake and no " +
-      "response algorithm ships here — supply an AuthProvider. No offset, duty or phase.",
+      "Link layer confirmed on a real unit (firmware 200): identity, lock state " +
+      "and the challenge exchange behave as documented. Physical output is gated " +
+      "behind that handshake and no response algorithm ships here — supply an " +
+      "AuthProvider. No offset, duty or phase.",
     create: (transport: Transport, options?: Record<string, unknown>) =>
       new GenXPro(transport, options as GenXProOptions),
   },

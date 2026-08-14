@@ -25,6 +25,7 @@ import {
   AwgError,
   DEFAULT_CAPABILITIES,
   applyStepSequentially,
+  readReply,
   substituteWaveform,
   unknownLimits,
   type AppliedWaveform,
@@ -291,16 +292,17 @@ export class Mhs5200a implements SignalGenerator {
   }
 
   private async expectAck(command: string): Promise<void> {
-    try {
-      const line = (await this.transport.readLine(this.opts.ackTimeoutMs)).trim();
-      if (line.length > 0 && !/^:?ok$/i.test(line)) {
-        this.log(`!! unexpected reply to ${command}: ${JSON.stringify(line)}`);
-      }
-    } catch (err) {
+    const raw = await readReply(this.transport, this.opts.ackTimeoutMs);
+    if (raw === null) {
       if (this.opts.strictAck) {
-        throw new AwgError(`No acknowledgement for ${command}`, err);
+        throw new AwgError(`No acknowledgement for ${command}`);
       }
       this.log(`!! no acknowledgement for ${command} — continuing`);
+      return;
+    }
+    const line = raw.trim();
+    if (line.length > 0 && !/^:?ok$/i.test(line)) {
+      this.log(`!! unexpected reply to ${command}: ${JSON.stringify(line)}`);
     }
   }
 

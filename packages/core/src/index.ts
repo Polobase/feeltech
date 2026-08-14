@@ -15,7 +15,7 @@ export {
   AwgVerifyError,
 } from "./errors.js";
 
-export { LineBuffer, encodeText } from "./transport.js";
+export { LineBuffer, encodeText, readReply } from "./transport.js";
 export type { Transport, SerialOpenOptions } from "./transport.js";
 
 export {

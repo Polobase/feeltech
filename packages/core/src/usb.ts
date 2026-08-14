@@ -24,6 +24,9 @@ export interface UsbBridge {
 export const USB_SERIAL_BRIDGES: readonly UsbBridge[] = [
   { vendorId: "1a86", productId: "7523", label: "CH340" },
   { vendorId: "1a86", productId: "5523", label: "CH341" },
+  // Confirmed on a Spooky2 Gen X Pro (firmware 200): both generators enumerate
+  // through one CH34x, as two interfaces sharing a serial number and location.
+  { vendorId: "1a86", productId: "55d2", label: "CH342/CH343", dualPort: true },
   { vendorId: "10c4", productId: "ea60", label: "CP2102" },
   { vendorId: "10c4", productId: "ea70", label: "CP2105", dualPort: true },
   { vendorId: "10c4", productId: "ea71", label: "CP2108", dualPort: true },
@@ -47,7 +50,14 @@ export const USB_SERIAL_FILTERS: ReadonlyArray<{
   usbProductId: Number.parseInt(b.productId, 16),
 }));
 
-/** Identify the bridge chip behind a port, when its IDs are known. */
+/**
+ * Identify the bridge chip behind a port, when its IDs are known.
+ *
+ * An exact vendor+product match returns the table entry. A vendor-only match
+ * returns a synthesized entry carrying the port's *real* product ID and a
+ * generic label — never another product's row, which would claim hardware
+ * facts (`dualPort`, a product ID) the device never reported.
+ */
 export function describeBridge(ids: {
   vendorId?: string | undefined;
   productId?: string | undefined;
@@ -55,8 +65,17 @@ export function describeBridge(ids: {
   const vid = ids.vendorId?.toLowerCase();
   const pid = ids.productId?.toLowerCase();
   if (!vid) return undefined;
-  return (
-    USB_SERIAL_BRIDGES.find((b) => b.vendorId === vid && b.productId === pid) ??
-    USB_SERIAL_BRIDGES.find((b) => b.vendorId === vid)
+
+  const exact = USB_SERIAL_BRIDGES.find(
+    (b) => b.vendorId === vid && b.productId === pid,
   );
+  if (exact) return exact;
+
+  const sameVendor = USB_SERIAL_BRIDGES.find((b) => b.vendorId === vid);
+  if (!sameVendor) return undefined;
+  if (pid === undefined) return sameVendor;
+
+  // Known vendor, unknown model: say exactly that.
+  const family = sameVendor.label.replace(/\d.*$/, "") || sameVendor.label;
+  return { vendorId: vid, productId: pid, label: `${family}x (unrecognized model)` };
 }

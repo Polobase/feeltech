@@ -74,9 +74,21 @@ same for `/web` and `/testing`. Nothing else changes.
 
 ### Fixed
 
-- `findDevices()` no longer collapses the two ports of a genuine dual-port
-  bridge into one. Pass `{ keepDualPorts: true }` where each port is a separate
-  generator.
+- `describeBridge()` no longer answers a vendor-only match with another
+  product's table row, which claimed a product ID and `dualPort` flag the device
+  never reported. An unrecognized model now returns its real IDs and says so.
+- `findDevices()` no longer hides all but the first device behind a multi-port
+  USB bridge. Deduplication of macOS's two-driver port names now keys on the
+  interface rather than the USB location, which a multi-port bridge shares
+  across independent devices. Confirmed against a Spooky2 Gen X Pro, whose two
+  generators enumerate through one CH34x.
+- Deduplication is applied on macOS only. Other platforms expose one node per
+  interface already, so deduplicating there could only lose devices.
+- A serial reply that arrives after its read timed out no longer answers the
+  *next* command. All drivers now read through `readReply()`, which waits a
+  grace period for the straggler and discards it. Found on a Gen X Pro, where a
+  late `:err` spliced itself onto the following reply as `":err\r␀:r01=G2."`;
+  the same hazard applies to any request/response device on a slow link.
 
 ## [0.1.1] — 2026-07-08
 

@@ -26,6 +26,7 @@
 import {
   AwgError,
   DEFAULT_CAPABILITIES,
+  readReply,
   substituteWaveform,
   unknownLimits,
   type AppliedWaveform,
@@ -523,13 +524,13 @@ export class GenXPro implements SignalGenerator {
     return this.run(async () => {
       this.log(`>> ${command}`);
       await this.transport.write(command + "\r\n");
-      try {
-        const reply = (await this.transport.readLine(this.opts.replyTimeoutMs)).trim();
-        this.log(`<< ${reply}`);
-        return reply;
-      } catch {
+      const reply = await readReply(this.transport, this.opts.replyTimeoutMs);
+      if (reply === null) {
+        this.log(`!! no reply to ${command} within ${this.opts.replyTimeoutMs} ms`);
         return "";
       }
+      this.log(`<< ${reply.trim()}`);
+      return reply.trim();
     });
   }
 

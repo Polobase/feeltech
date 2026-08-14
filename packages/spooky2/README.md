@@ -3,12 +3,17 @@
 TypeScript drivers for **Spooky2** signal generators — XM, Gen X and Gen X Pro —
 over USB serial, in Node.js and the browser.
 
-> ### ⚠️ Nothing here is hardware-verified
+> ### ⚠️ Output is not hardware-verified
 >
-> Every driver in this package implements a protocol documented by third-party
-> reverse engineering. Their tests assert conformance to that documentation,
-> which is **not** the same as proving the documentation right. Each reports
+> These drivers implement protocols documented by third-party reverse
+> engineering. Their tests assert conformance to that documentation, which is
+> **not** the same as proving the documentation right. Each reports
 > `capabilities.limits.verified === false`. **Confirm output with a scope.**
+>
+> The Gen X Pro driver's *link layer* has been checked against a real unit
+> (firmware 200): connecting, identity readback, the lock state and the
+> challenge exchange all behave as documented. Nothing past the lock could be
+> tested, because a locked unit rejects every register write.
 
 ## Install
 

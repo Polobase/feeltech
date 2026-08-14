@@ -6,7 +6,7 @@
  */
 
 import { AwgError, AwgTimeoutError } from "../errors.js";
-import { USB_SERIAL_VENDOR_IDS, describeBridge } from "../usb.js";
+import { USB_SERIAL_VENDOR_IDS } from "../usb.js";
 import {
   LineBuffer,
   encodeText,
@@ -199,29 +199,38 @@ export interface FindDevicesOptions {
    * in {@link USB_SERIAL_VENDOR_IDS}.
    */
   vendorIds?: readonly string[];
-  /**
-   * Keep both serial devices of a dual-port bridge instead of collapsing them.
-   * Needed for the Gen X Pro, where the two ports are two separate generators.
-   * Defaults to false.
-   */
-  keepDualPorts?: boolean;
+}
+
+/**
+ * The interface a macOS device path refers to, with the driver's naming
+ * convention stripped off.
+ *
+ * macOS shows one physical interface twice when two drivers claim it — Apple's
+ * built-in CDC driver and the vendor's — as `usbmodem5B230040901` and
+ * `wchusbserial5B230040901`. What is left after removing the prefix identifies
+ * the interface itself, so the two views collapse while genuinely separate
+ * interfaces (…901 vs …903) stay apart.
+ */
+function interfaceId(path: string): string {
+  const base = path.replace(/^.*\//, "").replace(/^(cu|tty)\./, "");
+  return base.replace(/^(wchusbserial|usbserial-|usbserial|usbmodem|SLAB_USBtoUART)/, "");
 }
 
 /**
  * List serial ports that look like a generator (by USB vendor ID).
  *
  * The device path can change between USB ports (e.g. `wchusbserial110` vs
- * `wchusbserial1220` on macOS), so prefer this over hardcoding a path.
+ * `wchusbserial1220`), so prefer this over hardcoding a path.
  *
- * macOS specifics: `/dev/tty.*` paths are rewritten to their `/dev/cu.*`
- * counterparts (the callout device is the right one for host-initiated
- * connections), and adapters that appear twice — once via Apple's built-in
- * CH340 driver (`usbserial-…`) and once via the WCH vendor driver
- * (`wchusbserial…`) — are deduplicated by physical USB location.
+ * On macOS, `/dev/tty.*` paths are rewritten to their `/dev/cu.*` counterparts
+ * (the callout device is the right one for host-initiated connections), and an
+ * adapter claimed by both Apple's driver and the vendor's is deduplicated,
+ * keeping the vendor node.
  *
- * That deduplication is wrong for genuinely dual-port bridges (CP2105/CP2108),
- * where the two devices are two independent generators sharing one location.
- * Pass `keepDualPorts: true` to keep them both.
+ * That deduplication keys on the *interface*, not the USB location. A
+ * multi-port bridge puts several independent devices at one location — a
+ * Spooky2 Gen X Pro presents both of its generators through a single CH34x —
+ * and keying on location would hide all but the first.
  */
 export async function findDevices(options: FindDevicesOptions = {}): Promise<PortInfo[]> {
   const vendorIds = options.vendorIds ?? USB_SERIAL_VENDOR_IDS;
@@ -236,22 +245,21 @@ export async function findDevices(options: FindDevicesOptions = {}): Promise<Por
         : p,
     );
 
-  const byLocation = new Map<string, PortInfo>();
-  const kept: PortInfo[] = [];
+  // Only macOS shows one interface under two names; elsewhere each node is
+  // already a distinct interface and deduplicating could only lose devices.
+  if (process.platform !== "darwin") return candidates;
+
+  const byInterface = new Map<string, PortInfo>();
   for (const p of candidates) {
-    if (options.keepDualPorts && describeBridge(p)?.dualPort) {
-      kept.push(p);
-      continue;
-    }
-    const key = p.locationId ?? p.serialNumber ?? p.path;
-    const existing = byLocation.get(key);
+    const key = `${p.locationId ?? p.serialNumber ?? ""}:${interfaceId(p.path)}`;
+    const existing = byInterface.get(key);
     const preferOverExisting =
       existing !== undefined &&
       p.path.includes("wchusbserial") &&
       !existing.path.includes("wchusbserial");
-    if (!existing || preferOverExisting) byLocation.set(key, p);
+    if (!existing || preferOverExisting) byInterface.set(key, p);
   }
-  return [...byLocation.values(), ...kept];
+  return [...byInterface.values()];
 }
 
 export {

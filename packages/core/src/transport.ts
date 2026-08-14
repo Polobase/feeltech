@@ -101,3 +101,34 @@ export class LineBuffer {
 export function encodeText(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
+
+/**
+ * Read one reply, leaving the input buffer clean if it never arrives.
+ *
+ * A plain `readLine()` that times out is not enough for request/response
+ * protocols. The reply may simply be late — and once it lands, the *next*
+ * command reads it instead of its own answer, or worse, reads the two spliced
+ * into one line. Observed on a Spooky2 Gen X Pro: a `:w92` reply that missed
+ * its window turned the following `:r01=` into `":err\r␀:r01=G2."`.
+ *
+ * So on timeout this waits a grace period for the straggler and discards
+ * whatever turned up, putting the link back in a known state.
+ *
+ * @returns the reply, or `null` if none arrived in time.
+ */
+export async function readReply(
+  transport: Transport,
+  timeoutMs: number,
+  options: { graceMs?: number } = {},
+): Promise<string | null> {
+  try {
+    return await transport.readLine(timeoutMs);
+  } catch {
+    // Give a straggling reply time to land, then drop it — anything arriving
+    // now belongs to the command we just gave up on.
+    const grace = options.graceMs ?? 50;
+    if (grace > 0) await new Promise((resolve) => setTimeout(resolve, grace));
+    await transport.flush();
+    return null;
+  }
+}

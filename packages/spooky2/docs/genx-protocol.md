@@ -1,9 +1,25 @@
 # Spooky2 Gen X serial protocol
 
-**Verification status: unverified.** Everything here comes from third-party
-reverse engineering of the Spooky2 application, not from measurements. The
-driver's wire-transcript tests assert conformance to this document; they do not
-prove the document is right. Confirm output with a scope.
+**Verification status: partly confirmed on hardware.**
+
+Confirmed against a real **Gen X Pro, firmware 200** (`:r02=200`):
+
+- the link settings and framing below,
+- both generators enumerating through **one CH34x bridge** (`1a86:55d2`) as two
+  interfaces sharing a serial number and USB location,
+- each unit self-reporting its identity on `:r01=` (`G1` / `G2`) — and the
+  reported identity **not** matching the port ordering, which is why channel
+  mapping must use it rather than connection order,
+- the lock: `:r92=0`, with every register other than `:r90`/`:r92` answering
+  `:err` while locked,
+- the challenge exchange: `:r90=<nonce>,` returns two 9-digit values, fresh on
+  every call and different per unit,
+- a wrong `:w92=` answering `:err` within ~3 ms.
+
+**Not confirmed:** anything downstream of the lock. The step sequence, register
+encodings, ramp behaviour and waveform slots below could not be exercised,
+because a locked unit rejects every register write. Treat them as documentation,
+not measurement, and confirm output with a scope.
 
 ## Link
 
