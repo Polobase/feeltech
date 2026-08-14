@@ -1,25 +1,40 @@
 # Spooky2 Gen X serial protocol
 
-**Verification status: partly confirmed on hardware.**
+**The authoritative register map is now
+[`spooky2-command-set.md`](spooky2-command-set.md)**, extracted from the vendor
+application's own debug labels and cross-checked on hardware. This file records
+what was confirmed against a real unit and how the earlier map was corrected.
 
-Confirmed against a real **Gen X Pro, firmware 200** (`:r02=200`):
+## Confirmed against a real Gen X Pro (firmware 200)
 
-- the link settings and framing below,
-- both generators enumerating through **one CH34x bridge** (`1a86:55d2`) as two
-  interfaces sharing a serial number and USB location,
-- each unit self-reporting its identity on `:r01=` (`G1` / `G2`) — and the
-  reported identity **not** matching the port ordering, which is why channel
-  mapping must use it rather than connection order,
-- the lock: `:r92=0`, with every register other than `:r90`/`:r92` answering
-  `:err` while locked,
-- the challenge exchange: `:r90=<nonce>,` returns two 9-digit values, fresh on
-  every call and different per unit,
-- a wrong `:w92=` answering `:err` within ~3 ms.
+- Link settings and framing (below).
+- Both generators enumerate through **one CH34x bridge** (`1a86:55d2`) as two
+  interfaces sharing a serial number and USB location.
+- Each unit self-reports its identity on `:r01=` (`G1` / `G2`), and that
+  identity **does not** follow port ordering — channel mapping must use the
+  reported identity, not connection order.
+- The lock: while locked, every register except `:r90`/`:r92` answers `:err`.
+  `:r90=<nonce>,` returns two 9-digit challenge values, fresh per call and
+  different per unit; a wrong `:w92=` answers `:err` in ~3 ms.
+- **The auth handshake works** — with a valid `:w92` response the registers
+  unlock and the output can be driven.
+- **`:w28` is amplitude.** With the output running, stepping `:w28` moves the
+  device's biofeedback current sensor (`:r11`) monotonically; stepping `:w17`
+  does not. That confirms the vendor's amplitude assignment and refutes the
+  third-party one (which had `:w17` as amplitude and `:w28` as a ramp target).
 
-**Not confirmed:** anything downstream of the lock. The step sequence, register
-encodings, ramp behaviour and waveform slots below could not be exercised,
-because a locked unit rejects every register write. Treat them as documentation,
-not measurement, and confirm output with a scope.
+## How the earlier map was wrong
+
+The first version of this driver came from third-party reverse engineering and
+had, among others, `:w24` as an exponent-encoded "arm" register, `:w28`/`:w29`
+as display-frequency ramp targets, and `:w17` as amplitude. Under that reading a
+plain frequency write appeared to produce no output, which led to a
+prepare → arm → **ramp** → amplitude sequence.
+
+The vendor labels — and the hardware — show `:w28`/`:w29` are **amplitude**. The
+"ramp" was stepping the amplitude up from zero; that is why output seemed to
+"appear" partway through. The Gen X needs no ramp and drives like any register
+device. The `capabilities.requiresFrequencyRamp` flag is now `false`.
 
 ## Link
 
@@ -27,7 +42,7 @@ not measurement, and confirm output with a scope.
 | --- | --- |
 | Baud rate | 115200 |
 | Data bits / parity / stop bits | 8 / none / 1 |
-| USB bridge | CP2105 on the Pro — **two ports per unit**, each an independent generator |
+| USB bridge | CH34x (`1a86:55d2`) on this unit — **two ports, one per generator** |
 
 Do not toggle DTR/RTS on open: on a dual-port bridge that resets the sibling
 port's display.
@@ -36,103 +51,28 @@ port's display.
 
 ```
 write:  :w<reg>=<field0>,<field1>,\r\n   →   :ok  /  :err
-read:   :r<reg>=\r\n                     →   :r<reg>=<v1>,<v2>
+read:   :r<reg>=\r\n                     →   :r<reg>=<v>   /   :err
 ```
 
-Registers take two comma-separated fields, one per output. Addressing a single
-channel means filling its field and leaving the other empty — channel 0 is
-`<v>,,` and channel 1 is `,<v>,`.
+Registers take two comma-separated fields, one per output. Addressing one output
+fills its field and leaves the other empty (`:w28=5,,` / `:w28=,5,`). Each write
+must be answered before the next is sent — the device drops commands that arrive
+while it is still replying.
 
-Each write must be answered before the next is sent. The device drops commands
-that arrive while it is still replying.
+There is **no live-parameter readback**: the `:r*` space is offline-program
+memory (zero until a program is loaded) and the two analog biofeedback readings
+(`:r11` current, `:r12` angle), not a mirror of the write registers.
 
-## Registers
+## Scale factors — still unmeasured
 
-| Register | Purpose |
-| --- | --- |
-| 11 | Output arm mask (both fields: Out1, Out2) |
-| 12 | Reset — written as the pair `:w12=0,,` then `:w12=,0,` |
-| 13 | Clear |
-| 14 | Channel select (`1` or `2`) |
-| 15 | Frequency range toggle (classic unit) |
-| 17 | Amplitude, centivolts, both outputs |
-| 20 / 21 | DDS path select |
-| 22 | Waveform slot |
-| 24 | Arm frequency — see encoding below |
-| 28 / 29 | Display frequency |
-| 32 / 33 | DC offset (`120` = neutral) — **see the warning below** |
-| 40 | Stop |
-| 90 | Auth challenge |
-| 92 | Auth response / lock status |
-
-## Frequency encodings
-
-### Arm register (24)
-
-Packs a mantissa and a decimal exponent into one integer. The last digit is the
-exponent code `8 - p`, where `p` is the number of decimal places the mantissa
-needed; the leading digits are the mantissa.
-
-| Frequency | Places `p` | Mantissa | Register |
-| --- | --- | --- | --- |
-| 64 Hz | 0 | 64 | `648` |
-| 440 Hz | 0 | 440 | `4408` |
-| 727.5 Hz | 1 | 7275 | `72757` |
-
-Decoding: `display = floor(v / 10) × 10^((v mod 10) − 8)`.
-
-### Display registers (28, 29)
-
-No exponent; the scale is inferred from the precision needed — whole hertz
-as-is, two decimal places as centihertz, anything finer as hundred-thousandths.
-
-## The step sequence
-
-A bare frequency write produces **no output**. The Pro needs the full sequence:
-
-1. **Display text** — `:n00=<text>`. Acts as an output gate, not just an LCD write.
-2. **Prepare channel** (once per channel) — stop state, register 12 resets, DDS
-   path selection, `:w14=<channel+1>`.
-3. **Arm** — `:w13=0,` → DDS select → `:w24=<arm value>,` → register 12 reset →
-   `:w21=25,` → `:w11=<mask>`.
-4. **Ramp** — step registers 28 and 29 up to the target. A single jump leaves the
-   output silent. The walk uses 50 Hz increments, switching to even division
-   above 24 intermediate steps so any target is reached in about a second.
-5. **Amplitude** — `:w17=<cv>,<cv>,`.
-
-Stopping must disarm register 11 **first**, otherwise the output sticks at
-whatever frequency register 24 last held.
-
-## ⚠ DC offset
-
-Registers 32 and 33 do carry the offset (`70` ≈ −100 %, `120` = neutral, linear
-between). But the only known way to latch them is inside the stop sequence,
-where `:w40=0,` follows each write — and `:w40=0,` is a **stop command, not a
-latch**. Writing the offset registers outside that sequence has been observed to
-silence the output entirely.
-
-The driver therefore refuses any offset other than 0 V rather than issuing a
-write that would quietly kill the channel.
+The register *assignments* are settled; their *encodings* are not. The driver
+uses XM-analogous defaults — frequency Hz×100 (or ×100000 in low-frequency mode,
+below 600 Hz), amplitude in centivolts, offset centred on 120 — and marks them
+in code as needing scope confirmation.
 
 ## Authentication
 
-Physical output is gated behind a challenge/response handshake:
-
-```
-:r92=            → lock status (0 = locked)
-:r90=<nonce>,    → two challenge values
-:w92=<response>. → unlock
-```
-
-The host nonce is a random permutation of the digits 1–9; zero is excluded
-because the known transforms index into the nonce digit by digit. Two rounds are
-required — one successful exchange has been observed not to unlock on its own.
-
-**This package ships no response algorithm.** The transform is not published,
-the implementations in circulation were recovered by disassembling the vendor
-application, and the lock exists precisely to keep third-party software from
-driving the outputs. Supply an `AuthProvider` if you want to unlock your own
-hardware; see `src/auth.ts`.
-
-Without a provider the driver connects, writes and reads registers normally, and
-reports `authenticated === false`.
+`:r90=<nonce>,` → two challenge values → `:w92=<response>.` → `:ok`. The host
+nonce is a random permutation of the digits 1–9; two rounds are required. The
+response transform is **not** shipped in this package — see `../src/auth.ts` and
+the `AuthProvider` hook.

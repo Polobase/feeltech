@@ -133,7 +133,7 @@ export class GenXPair implements SignalGenerator {
 
   /** Stop output on both units. */
   async stopAll(): Promise<void> {
-    await Promise.all(this.units.map((u) => u.stopOutput()));
+    await Promise.all(this.units.map((u) => u.allOutputsOff()));
   }
 }
 

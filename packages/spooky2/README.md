@@ -59,20 +59,38 @@ npx @freqgen/spooky2 set --device xm --port /dev/cu.usbserial-1120 \
 Protocol references: [`docs/xm-protocol.md`](docs/xm-protocol.md),
 [`docs/genx-protocol.md`](docs/genx-protocol.md).
 
-## Two things worth knowing before you start
+## The register map is the vendor's own
 
-**The Gen X cannot be driven parameter-by-parameter.** Writing a frequency and
-expecting output does not work — the device needs its display text set, the
-channel prepared, an arm sequence written, the frequency *ramped* up in steps,
-and only then the amplitude. `applyStep()` does all of that. The individual
-setters re-run the sequence rather than pretending to be independent.
+The Gen X Pro driver was rebuilt on the register assignments Spooky2's own
+application prints in its debug strings (`:w24` = "Out 1 Frequency", `:w28` =
+"Out 1 Amplitude", …) — see [`docs/spooky2-command-set.md`](docs/spooky2-command-set.md).
+That map was cross-checked on a real Gen X Pro: with the output running, stepping
+`:w28` moved the device's own biofeedback current sensor and stepping `:w17` did
+not, confirming `:w28` is amplitude.
 
-**Gen X Pro output is gated behind a challenge/response handshake**, and this
-package ships no response algorithm. The transform is unpublished, the
-implementations in circulation were recovered by disassembling the vendor
-application, and the lock exists precisely to keep third-party software from
-driving the outputs — so distributing one here is not a decision this library
-makes for you. Supply your own:
+It replaced an earlier third-party map that treated `:w28`/`:w29` as a frequency
+"ramp" and needed an elaborate arm-and-ramp sequence to get output. That
+sequence was really ramping the *amplitude* up from zero. **The Gen X drives
+like any register device** — plain writes, no ramp — so `applyStep()` is now the
+ordinary sequential application, and `capabilities.requiresFrequencyRamp` is
+`false`.
+
+The *scale factors* (counts per hertz, per volt) are not yet scope-confirmed;
+the driver uses XM-analogous defaults and marks them in code.
+
+### Beyond the basics
+
+The Gen X Pro exposes the per-output functions Spooky2 shells use, all from the
+vendor labels: `setGating`, `setModulation`, `setSync`, `setInversion`,
+`setLowFrequencyMode`, `calibrate` and `reset`.
+
+## Gen X Pro output is gated behind a handshake
+
+Registers accept writes and reads only after a register-92 challenge/response
+succeeds. This package ships **no** response algorithm — the transform is
+unpublished, the implementations in circulation were recovered by disassembling
+the vendor application, and the lock exists precisely to keep third-party
+software off the outputs. Supply your own:
 
 ```ts
 const pro = new GenXPro(transport, {
@@ -80,19 +98,38 @@ const pro = new GenXPro(transport, {
 });
 ```
 
-Without a provider the driver still connects, writes and reads registers;
-`authenticated` stays `false` and the outputs stay dead.
+The handshake itself is implemented and confirmed working on hardware. Without a
+provider the driver still connects and accesses registers; `authenticated` stays
+`false` and the outputs stay dead.
+
+## Waveform tables
+
+`SPOOKY2_WAVEFORMS` ships the eleven real Spooky2 waveform sample tables (sine,
+square, sawtooth, inverted sawtooth, triangle, the damped pair, the H-bomb pair,
+and two user-defined slots), taken verbatim from the vendor's `Waveforms.csv` at
+1024 samples each, normalised to −1…+1.
+
+## Running a program
+
+A frequency program — a list of steps with dwell times — runs on any driver via
+`runProgram()` from `@freqgen/core`:
+
+```ts
+import { runProgram } from "@freqgen/core";
+
+await runProgram(xm, [
+  { frequencyHz: 727.5, dwellSeconds: 180 },
+  { frequencyHz: 787,   dwellSeconds: 180 },
+  { frequencyHz: 880,   dwellSeconds: 180 },
+], { repeat: 3, signal: abortController.signal });
+```
 
 ## Unsupported parameters
 
-The Gen X drivers accept `offsetV: 0`, `dutyCyclePct: 50` and `phaseDeg: 0` —
-the neutral values every Spooky2 preset carries — and **throw** on anything
-else, because no register is known for them. That is deliberate: silently
-ignoring a duty-cycle request would run the wrong waveform without telling you.
-
-For DC offset on the Gen X Pro specifically, registers 32 and 33 do carry the
-value, but the only known way to latch them sits inside the stop sequence, and
-writing them outside it has been observed to silence the output entirely.
+Duty cycle has no register on the Gen X, so the drivers accept `dutyCyclePct: 50`
+(the neutral every preset carries) and **throw** on anything else rather than
+silently running the wrong shape. On the Gen X Pro, Out 1 also has no phase
+register — phase is set on Out 2 relative to Out 1.
 
 ## License
 

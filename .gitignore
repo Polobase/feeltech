@@ -8,3 +8,4 @@ dist
 .npmrc
 temp/
 scripts/
+local/

@@ -41,10 +41,10 @@ export const SPOOKY2_DEVICES: readonly DeviceDescriptor[] = [
     label: "Gen X Pro",
     verified: false,
     note:
-      "Link layer confirmed on a real unit (firmware 200): identity, lock state " +
-      "and the challenge exchange behave as documented. Physical output is gated " +
-      "behind that handshake and no response algorithm ships here — supply an " +
-      "AuthProvider. No offset, duty or phase.",
+      "Register map from the vendor application, amplitude assignment confirmed " +
+      "on a real unit (firmware 200) via the biofeedback sensor; scale factors " +
+      "not yet scope-confirmed. Physical output is gated behind a register-92 " +
+      "handshake and no response algorithm ships here — supply an AuthProvider.",
     create: (transport: Transport, options?: Record<string, unknown>) =>
       new GenXPro(transport, options as GenXProOptions),
   },

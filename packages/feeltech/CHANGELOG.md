@@ -55,6 +55,9 @@ same for `/web` and `/testing`. Nothing else changes.
 - `FEELTECH_DEVICES` registry descriptors.
 - Vendor-neutral helpers re-exported for convenience: `foldToBand()`,
   `fitFrequencies()`, `resolveCap()`, `applyStepSequentially()`.
+- `runProgram()` (from `@freqgen/core`) — run a frequency program (a list of
+  steps with dwell times) on any driver, with repeat, progress and `AbortSignal`
+  cancellation.
 
 ### Changed
 

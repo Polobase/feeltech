@@ -1,31 +1,43 @@
 /**
  * Spooky2 Gen X Pro driver.
  *
- * **Verification status: unverified.** The register map and command sequences
- * come from third-party reverse engineering of the vendor application. They are
- * reproduced here as protocol facts and pinned by wire-transcript tests.
+ * ## Register assignments — confirmed
  *
- * ## Why this driver overrides `applyStep`
+ * The register map here is the vendor's own. Spooky2's application
+ * (`Spooky.exe`) labels each command in its debug/log strings — `:w24=` is
+ * " Out 1 Frequency", `:w28=` is " Out 1 Amplitude", and so on — and that
+ * labelling was cross-checked on a real Gen X Pro (firmware 200): with the
+ * output driven, stepping `:w28` moved the device's own biofeedback current
+ * sensor while stepping `:w17` did not, confirming `:w28` is amplitude and
+ * `:w17` is not. See `docs/spooky2-command-set.md`.
  *
- * The Pro cannot be driven parameter-by-parameter. Writing a frequency and
- * expecting output does not work: the device needs its display text set, the
- * channel prepared, an arm sequence written, the frequency *ramped* up in steps
- * — a single jump to the target produces silence — and only then the amplitude.
- * {@link GenXPro.applyStep} performs that whole sequence, and the fine-grained
- * setters are thin wrappers that re-run it rather than pretending to be
- * independent.
+ * This replaces an earlier map from third-party reverse engineering that had
+ * `:w28`/`:w29` as a "display-frequency ramp" and `:w17` as amplitude. Under
+ * that map a bare frequency write seemed to produce no output, which led to an
+ * elaborate arm-and-ramp sequence. The sequence was really ramping the
+ * *amplitude* (`:w28`/`:w29`) up from zero — which is why output "appeared" —
+ * and the Gen X in fact drives like any other register device.
+ *
+ * ## Encodings — assignments confirmed, scale factors are not
+ *
+ * Which register does what is settled. The *scale factors* (how many counts per
+ * hertz, per volt) could not be measured without an oscilloscope, so the values
+ * below mirror the Spooky2 XM, the closest analogue, and are marked accordingly.
+ * Correct them once you can put a scope on the output.
  *
  * ## Output is gated behind authentication
  *
- * Registers accept writes and answer reads, but the outputs stay dead until the
- * register-92 handshake succeeds. This package ships no response algorithm —
- * see `auth.ts` for why, and for the {@link AuthProvider} hook that lets you
- * supply one.
+ * Registers accept writes and answer reads only after the register-92 handshake
+ * succeeds; before that every data register answers `:err`. This package ships
+ * no response algorithm — see `auth.ts` for why, and for the {@link AuthProvider}
+ * hook that supplies one. The handshake itself is implemented and confirmed
+ * working against real hardware.
  */
 
 import {
   AwgError,
   DEFAULT_CAPABILITIES,
+  applyStepSequentially,
   readReply,
   substituteWaveform,
   unknownLimits,
@@ -39,62 +51,95 @@ import {
 } from "@freqgen/core";
 
 import { generateNonce, type AuthChallenge, type AuthProvider } from "./auth.js";
-import {
-  amplitudeRegisterValue,
-  armRegisterValue,
-  channelSlot,
-  displayRegisterValue,
-} from "./genx-wire.js";
+import { channelSlot } from "./genx-wire.js";
 
+/**
+ * Register map, from Spooky2's own debug labels.
+ *
+ * Live-control registers take two comma-separated fields, one per output;
+ * addressing one leaves the other empty (`:w28=5,,` / `:w28=,5,`). A handful
+ * (reset) take a single value.
+ */
 export const GENX_PRO_REGISTERS = {
+  /** Output on/off. `:w11=1,,` Out1 on, `:w11=,1,` Out2 on, `:w11=0,0,` both off. */
   output: 11,
-  reset: 12,
-  clear: 13,
-  channelSelect: 14,
-  amplitude: 17,
-  ddsA: 20,
-  ddsB: 21,
-  arm: 24,
-  displayFrequencyA: 28,
-  displayFrequencyB: 29,
-  offsetA: 32,
-  offsetB: 33,
-  stop: 40,
+  /** Out 1 gating on/off. */
+  gatingOut1: 12,
+  /** Out 2 gating on/off. */
+  gatingOut2: 70,
+  /** Out 2 modulation on/off. */
+  modulationOut2: 13,
+  /** Out 2 sync on/off. */
+  syncOut2: 14,
+  /** Out 1 low-frequency mode on/off. */
+  lowFreqOut1: 15,
+  /** Out 2 low-frequency mode on/off. */
+  lowFreqOut2: 51,
+  /** Waveform inversion (field 1 = Out1, field 2 = Out2). */
+  inversion: 17,
+  /** Out 1 waveform number. */
+  waveformOut1: 20,
+  /** Out 2 waveform number. */
+  waveformOut2: 21,
+  /** Out 1 frequency. */
+  frequencyOut1: 24,
+  /** Out 2 frequency. */
+  frequencyOut2: 25,
+  /** Out 1 amplitude. */
+  amplitudeOut1: 28,
+  /** Out 2 amplitude. */
+  amplitudeOut2: 29,
+  /** Out 1 offset (120 = centre). */
+  offsetOut1: 32,
+  /** Out 2 offset (120 = centre). */
+  offsetOut2: 33,
+  /** Out 2 phase angle. Out 1 has no phase register. */
+  phaseOut2: 40,
+  /** Calibrate, no load. */
+  calibrateNoLoad: 50,
+  /** Calibrate, 50 Ω load. */
+  calibrate50Ohm: 71,
+  /** Device reset — written as `:w95=12021,`. */
+  reset: 95,
   authChallenge: 90,
   authResponse: 92,
 } as const;
 
-/** Slots 11 (sine) and 12 (square) — the only two established. */
+/**
+ * Frequency scale, **mirrored from the XM — not scope-confirmed on the GX.**
+ *
+ * The XM sends Hz×100 above a boundary and Hz×100000 below it, flipping a scale
+ * register; the GX has a "low frequency mode" register (`:w15`/`:w51`) that is
+ * the obvious counterpart. Adjust once measured.
+ */
+export const GENX_FREQ_SCALE_HIGH = 100;
+export const GENX_FREQ_SCALE_LOW = 100_000;
+export const GENX_FREQ_LOW_BOUNDARY_HZ = 600;
+
+/** Amplitude counts per volt. Mirrored from the XM (centivolts); not confirmed. */
+export const GENX_AMPLITUDE_SCALE = 100;
+
+/** Offset centre value and counts per full-scale, from the vendor init (`:w32=120`). */
+export const GENX_OFFSET_CENTRE = 120;
+export const GENX_OFFSET_SPAN = 50;
+
+/** Slots 11 (sine) and 12 (square) — the only two the third-party notes name;
+ * the vendor waveform table (`Waveforms.csv`) suggests more but their register
+ * numbers are unconfirmed, so only these two are mapped. */
 const GENX_WAVEFORM_SLOTS: Readonly<Partial<Record<WaveformKind, number>>> = {
   sine: 11,
   square: 12,
 };
 const GENX_WAVEFORMS: readonly WaveformKind[] = ["sine", "square"];
 
-/**
- * Cap on intermediate ramp steps.
- *
- * The ramp walks up in 50 Hz increments, which is fine at audio frequencies but
- * absurd higher up — 30 kHz would be 599 steps. Above this count the walk
- * switches to even division so any target is reached in roughly the same time.
- */
-export const GENX_RAMP_MAX_STEPS = 24;
-
-/** Delay between ramp steps, in ms. */
-const RAMP_STEP_DELAY_MS = 40;
-
 export interface GenXProOptions {
   /**
    * Supplies the register-92 response. Without one the driver connects and
-   * configures normally but the outputs stay gated.
+   * reads/writes registers, but the outputs stay gated.
    */
   authProvider?: AuthProvider;
-  /** How long to wait for `:ok` / `:err` / data after a write. Default: 250 ms. */
+  /** How long to wait for `:ok` / `:err` / data after a write. Default: 350 ms. */
   replyTimeoutMs?: number;
-  /** Label shown on the device display. Default: "awg". */
-  displayName?: string;
-  /** Amplitude used when a step does not specify one. Default: 5 V. */
-  defaultAmplitudeVpp?: number;
   /** Source of randomness for the auth nonce. Default: `Math.random`. */
   random?: () => number;
   debug?: boolean;
@@ -108,10 +153,9 @@ export class GenXPro implements SignalGenerator {
   authenticated = false;
 
   private commandLock = Promise.resolve();
-  private preparedChannel: number | null = null;
-  private lastHz: number | null = null;
-  private lastAmplitude: number;
-  private outputMask: [0 | 1, 0 | 1] = [1, 1];
+  private lowFreqMode: [boolean, boolean] = [false, false];
+  private amplitude: [number, number] = [0, 0];
+  private outputOn: [boolean, boolean] = [false, false];
   private opts: Required<Omit<GenXProOptions, "authProvider" | "logger">> & {
     authProvider?: AuthProvider;
     logger: (message: string, ...args: unknown[]) => void;
@@ -122,9 +166,7 @@ export class GenXPro implements SignalGenerator {
     options: GenXProOptions = {},
   ) {
     this.opts = {
-      replyTimeoutMs: options.replyTimeoutMs ?? 250,
-      displayName: options.displayName ?? "awg",
-      defaultAmplitudeVpp: options.defaultAmplitudeVpp ?? 5,
+      replyTimeoutMs: options.replyTimeoutMs ?? 350,
       random: options.random ?? Math.random,
       debug: options.debug ?? false,
       ...(options.authProvider !== undefined
@@ -135,7 +177,6 @@ export class GenXPro implements SignalGenerator {
         ((msg: string, ...rest: unknown[]) =>
           console.log("[spooky2-genx-pro]", msg, ...rest)),
     };
-    this.lastAmplitude = this.opts.defaultAmplitudeVpp;
   }
 
   get capabilities(): Capabilities {
@@ -143,13 +184,15 @@ export class GenXPro implements SignalGenerator {
       ...DEFAULT_CAPABILITIES,
       channels: 2,
       requiresAuth: true,
-      requiresFrequencyRamp: true,
+      // The arm/ramp requirement was an artefact of a mis-read register map.
+      requiresFrequencyRamp: false,
       waveforms: GENX_WAVEFORMS,
       limits: unknownLimits(
         false,
-        "No frequency limits established. The Pro is marketed as a 40 MHz " +
-          "instrument, but that figure has not been confirmed here.",
-        ["third-party Gen X protocol notes"],
+        "Register assignments confirmed from the vendor application and hardware; " +
+          "frequency and amplitude scale factors are mirrored from the XM and not " +
+          "scope-confirmed. No frequency limits established.",
+        ["Spooky.exe debug labels", "Gen X Pro firmware 200 (biofeedback probe)"],
       ),
     };
   }
@@ -158,7 +201,7 @@ export class GenXPro implements SignalGenerator {
    * Open the port and attempt authentication if a provider was supplied.
    *
    * A failed or absent handshake is not fatal — the link stays up so registers
-   * can still be written and read. It does mean the outputs will stay dead.
+   * remain accessible — but the outputs will stay dead.
    */
   async open(): Promise<void> {
     await this.transport.open({
@@ -176,14 +219,14 @@ export class GenXPro implements SignalGenerator {
       }
     } else {
       this.log(
-        "no authProvider supplied — registers are writable but output stays gated",
+        "no authProvider supplied — registers are accessible but output stays gated",
       );
     }
   }
 
   async close(): Promise<void> {
     try {
-      await this.stopOutput();
+      await this.allOutputsOff();
     } catch {
       /* closing anyway */
     }
@@ -218,8 +261,6 @@ export class GenXPro implements SignalGenerator {
         const reply = await this.command(
           `:r${GENX_PRO_REGISTERS.authChallenge}=${nonce},`,
         );
-        // A valid challenge is two numbers of at least nine digits. A short or
-        // absent reply means the device echoed rather than answered.
         const match = /(\d{9,}),(\d{9,})/.exec(reply);
         if (!match) {
           this.log(`auth round ${round} attempt ${attempt}: no challenge in ${JSON.stringify(reply)}`);
@@ -244,8 +285,15 @@ export class GenXPro implements SignalGenerator {
     return true;
   }
 
-  /** Register bootstrap the device expects immediately after unlocking. */
+  /**
+   * Register bootstrap the vendor sends immediately after unlocking.
+   *
+   * These are the exact writes `Spooky.exe` issues on connect: clear Out 2 sync,
+   * clear inversion, zero both frequencies, enable low-frequency mode on both,
+   * centre both offsets. Kept verbatim.
+   */
   private async postAuthInit(): Promise<void> {
+    this.lowFreqMode = [true, true];
     for (const cmd of [
       ":w14=0,",
       ":w17=0,0,",
@@ -261,140 +309,7 @@ export class GenXPro implements SignalGenerator {
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  // The step sequence
-  // ────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Apply a complete channel state.
-   *
-   * This is the only way to get output out of a Gen X Pro. Fields the device
-   * has no register for (offset, duty, phase) are accepted at their neutral
-   * values and rejected otherwise, so a preset that specifies "duty 50 %"
-   * works while one that asks for 25 % fails loudly instead of silently
-   * running at the wrong shape.
-   */
-  async applyStep(channel: number, step: ChannelStep): Promise<void> {
-    assertChannel(channel);
-    this.rejectUnsupported(step);
-
-    if (step.output === false) {
-      await this.stopOutput();
-      return;
-    }
-
-    if (step.waveform !== undefined) await this.setWaveform(channel, step.waveform);
-
-    const hz = step.frequencyHz ?? this.lastHz;
-    if (hz === null) {
-      throw new AwgError(
-        "The Gen X Pro has no way to arm an output without a frequency — " +
-          "include frequencyHz in the first step",
-      );
-    }
-    const amplitude = step.amplitudeVpp ?? this.lastAmplitude;
-    await this.runStep(channel, hz, amplitude);
-  }
-
-  /**
-   * Display text → prepare → arm → ramp → amplitude.
-   *
-   * The ordering is not a preference. The arm sequence is what makes the DDS
-   * emit, the ramp is what makes it emit at the target frequency, and amplitude
-   * last is what stops a channel briefly running loud at the wrong setting.
-   */
-  async runStep(channel: number, hz: number, amplitudeVpp: number): Promise<void> {
-    assertChannel(channel);
-    assertFinite("frequency", hz);
-    if (hz < 0) throw new AwgError(`frequency must be >= 0 Hz, got ${hz}`);
-
-    if (this.preparedChannel !== channel) await this.prepareChannel(channel);
-    await this.setDisplayText(`${this.opts.displayName} G${channel + 1} - ${formatHz(hz)}`);
-    await this.armSequence(channel, hz);
-    await this.rampTo(hz);
-    await this.setAmplitude(channel, amplitudeVpp);
-    this.lastHz = hz;
-  }
-
-  /** One-time per-channel setup, run lazily before the first step on a channel. */
-  async prepareChannel(channel: number): Promise<void> {
-    assertChannel(channel);
-    await this.setDisplayText(`${this.opts.displayName} G${channel + 1} - Stopped`);
-    await this.sequence([":w13=0,", ":w28=0,", ":w29=0,", ":w24=00,"]);
-    await this.resetRegister12();
-    // Registers 32 and 33 are the offset registers; 120 is their neutral value.
-    // The `:w40=0,` after each is part of the stop sequence, not a latch — it is
-    // included here because that is where it belongs, and must not be lifted out
-    // and reused elsewhere, where it silently kills the output.
-    await this.sequence([":w32=120,", ":w40=0,", ":w33=120,", ":w40=0,"]);
-
-    const [own, other] = channel === 0 ? ["w20", "w21"] : ["w21", "w20"];
-    await this.sequence([":w13=0,", `:${own}=12,`]);
-    await this.resetRegister12();
-    await this.sequence([
-      `:${other}=12,`,
-      ":w13=0,",
-      `:${own}=14,`,
-      `:w14=${channel + 1},`,
-    ]);
-    await this.resetRegister12();
-    await this.command(":w21=25,");
-    this.preparedChannel = channel;
-  }
-
-  private async armSequence(channel: number, hz: number): Promise<void> {
-    await this.command(":w13=0,");
-    await this.command(channel === 0 ? ":w20=14," : ":w21=14,");
-    await this.command(`:w24=${armRegisterValue(hz)},`);
-    await this.resetRegister12();
-    await this.command(":w21=25,");
-    await this.command(`:w11=${this.outputMask[0]},${this.outputMask[1]},`);
-  }
-
-  /**
-   * Walk the frequency up to the target.
-   *
-   * A single jump to the target leaves the output silent, so the display
-   * registers are stepped. Below {@link GENX_RAMP_MAX_STEPS} intermediate steps
-   * the walk uses 50 Hz increments; above that it divides the interval evenly,
-   * keeping the ramp inside about a second at any frequency.
-   */
-  private async rampTo(targetHz: number): Promise<void> {
-    const target = Math.max(0, targetHz);
-    const fiftyHzSteps = Math.max(0, Math.ceil(target / 50) - 1);
-
-    if (fiftyHzSteps <= GENX_RAMP_MAX_STEPS) {
-      for (let f = 50; f < target; f += 50) await this.writeRampPoint(f);
-    } else {
-      for (let i = 1; i <= GENX_RAMP_MAX_STEPS; i++) {
-        await this.writeRampPoint((target * i) / (GENX_RAMP_MAX_STEPS + 1));
-      }
-    }
-    await this.writeRampPoint(target, false);
-  }
-
-  private async writeRampPoint(hz: number, pause = true): Promise<void> {
-    const v = displayRegisterValue(hz);
-    await this.command(`:w28=${v},`);
-    await this.command(`:w29=${v},`);
-    if (pause) await new Promise((r) => setTimeout(r, RAMP_STEP_DELAY_MS));
-  }
-
-  /**
-   * Stop output.
-   *
-   * Register 11 is disarmed first — without that the output sticks at whatever
-   * frequency register 24 last held.
-   */
-  async stopOutput(): Promise<void> {
-    await this.command(":w11=0,0,");
-    await this.sequence([":w13=0,", ":w28=0,", ":w29=0,", ":w24=00,"]);
-    this.lastHz = null;
-    this.preparedChannel = null;
-    this.outputMask = [1, 1];
-  }
-
-  // ────────────────────────────────────────────────────────────────────────
-  // Fine-grained setters
+  // Parameters
   // ────────────────────────────────────────────────────────────────────────
 
   async setWaveform(
@@ -402,8 +317,9 @@ export class GenXPro implements SignalGenerator {
     waveform: WaveformKind | number,
   ): Promise<AppliedWaveform> {
     assertChannel(channel);
+    const reg = channel === 0 ? GENX_PRO_REGISTERS.waveformOut1 : GENX_PRO_REGISTERS.waveformOut2;
     if (typeof waveform === "number") {
-      await this.command(`:w22=${channelSlot(channel, waveform)}`);
+      await this.writeChannel(reg, channel, waveform);
       const kind = (Object.keys(GENX_WAVEFORM_SLOTS) as WaveformKind[]).find(
         (k) => GENX_WAVEFORM_SLOTS[k] === waveform,
       );
@@ -419,56 +335,93 @@ export class GenXPro implements SignalGenerator {
     const actual = direct !== undefined ? waveform : substituteWaveform(waveform, GENX_WAVEFORMS);
     if (actual === undefined) {
       throw new AwgError(
-        `The Gen X Pro has only sine and square slots; nothing can stand in for "${waveform}"`,
+        `The Gen X Pro has only sine and square slots mapped; nothing can stand in for "${waveform}"`,
       );
     }
     const code = GENX_WAVEFORM_SLOTS[actual]!;
-    await this.command(`:w22=${channelSlot(channel, code)}`);
+    await this.writeChannel(reg, channel, code);
     return { requested: waveform, actual, substituted: direct === undefined, code };
   }
 
-  /** Re-runs the whole step sequence — the Pro has no standalone frequency write. */
+  /**
+   * Set the output frequency.
+   *
+   * Switches low-frequency mode across {@link GENX_FREQ_LOW_BOUNDARY_HZ}, the
+   * way the XM does — see the scale-factor caveat at the top of this file.
+   */
   async setFrequency(channel: number, hz: number): Promise<void> {
-    await this.runStep(channel, hz, this.lastAmplitude);
+    assertChannel(channel);
+    assertFinite("frequency", hz);
+    if (hz < 0) throw new AwgError(`frequency must be >= 0 Hz, got ${hz}`);
+
+    const low = hz < GENX_FREQ_LOW_BOUNDARY_HZ;
+    if (this.lowFreqMode[channel] !== low) {
+      const reg = channel === 0 ? GENX_PRO_REGISTERS.lowFreqOut1 : GENX_PRO_REGISTERS.lowFreqOut2;
+      await this.writeChannel(reg, channel, low ? 1 : 0);
+      this.lowFreqMode[channel] = low;
+    }
+    const scale = low ? GENX_FREQ_SCALE_LOW : GENX_FREQ_SCALE_HIGH;
+    const reg = channel === 0 ? GENX_PRO_REGISTERS.frequencyOut1 : GENX_PRO_REGISTERS.frequencyOut2;
+    await this.writeChannel(reg, channel, Math.round(hz * scale));
   }
 
   async setAmplitude(channel: number, volts: number): Promise<void> {
     assertChannel(channel);
     assertFinite("amplitude", volts);
     if (volts < 0) throw new AwgError(`amplitude must be >= 0 V, got ${volts}`);
-    this.lastAmplitude = volts;
-    const cv = amplitudeRegisterValue(volts);
-    // Register 17 carries both outputs; the Pro drives them together.
-    await this.command(`:w17=${cv},${cv},`);
+    this.amplitude[channel] = volts;
+    const reg = channel === 0 ? GENX_PRO_REGISTERS.amplitudeOut1 : GENX_PRO_REGISTERS.amplitudeOut2;
+    await this.writeChannel(reg, channel, Math.round(volts * GENX_AMPLITUDE_SCALE));
   }
 
-  async setOutput(channel: number, enabled: boolean): Promise<void> {
+  /**
+   * Set the DC offset as a fraction of amplitude, −1…+1.
+   *
+   * `120` is centre; `+1` and `−1` map `GENX_OFFSET_SPAN` counts either side.
+   * The centre is confirmed from the vendor init; the span is an estimate.
+   */
+  async setOffsetRatio(channel: number, ratio: number): Promise<void> {
     assertChannel(channel);
-    if (!enabled) {
-      await this.stopOutput();
-      return;
-    }
-    if (this.lastHz === null) {
+    assertFinite("offset ratio", ratio);
+    const clamped = Math.max(-1, Math.min(1, ratio));
+    const reg = channel === 0 ? GENX_PRO_REGISTERS.offsetOut1 : GENX_PRO_REGISTERS.offsetOut2;
+    await this.writeChannel(reg, channel, GENX_OFFSET_CENTRE + Math.round(clamped * GENX_OFFSET_SPAN));
+  }
+
+  /** Set the DC offset in volts, converted against the channel's amplitude. */
+  async setOffset(channel: number, volts: number): Promise<void> {
+    assertChannel(channel);
+    assertFinite("offset", volts);
+    const half = (this.amplitude[channel] ?? 0) / 2;
+    if (half <= 0) {
+      if (volts === 0) return this.setOffsetRatio(channel, 0);
       throw new AwgError(
-        "Nothing to enable — the Gen X Pro arms its output as part of a step, so " +
-          "set a frequency (or call applyStep) first",
+        "Cannot express an offset in volts while the amplitude is 0 — " +
+          "set an amplitude first, or use setOffsetRatio()",
       );
     }
-    await this.runStep(channel, this.lastHz, this.lastAmplitude);
+    await this.setOffsetRatio(channel, volts / half);
   }
 
-  /** Not available: writing the offset registers outside the stop sequence kills output. */
-  async setOffset(_channel: number, volts: number): Promise<void> {
-    if (volts === 0) return;
-    throw new AwgError(
-      "DC offset is not supported on the Gen X Pro. Registers 32 and 33 do carry " +
-        "the offset, but the only known way to latch them sits inside the stop " +
-        "sequence, and writing them outside it has been observed to silence the " +
-        "output entirely.",
-    );
+  /**
+   * Set the phase in degrees. Only Out 2 (channel 1) has a phase register — the
+   * Gen X aligns Out 2 against Out 1, so Out 1 has no independent phase.
+   */
+  async setPhase(channel: number, degrees: number): Promise<void> {
+    assertChannel(channel);
+    assertFinite("phase", degrees);
+    if (channel === 0) {
+      if (degrees === 0) return;
+      throw new AwgError(
+        "The Gen X Pro has no Out 1 phase register — phase is set on Out 2 " +
+          "relative to Out 1. Call setPhase(1, …).",
+      );
+    }
+    const normalised = ((degrees % 360) + 360) % 360;
+    await this.writeChannel(GENX_PRO_REGISTERS.phaseOut2, channel, Math.round(normalised));
   }
 
-  /** Not available: no duty register has been identified. */
+  /** Duty cycle is not adjustable — no register for it exists. */
   async setDutyCycle(_channel: number, pct: number): Promise<void> {
     if (pct === 50) return;
     throw new AwgError(
@@ -476,25 +429,78 @@ export class GenXPro implements SignalGenerator {
     );
   }
 
-  /** Not available: no phase register has been identified. */
-  async setPhase(_channel: number, degrees: number): Promise<void> {
-    if (degrees === 0) return;
-    throw new AwgError(
-      `No phase register is known for the Gen X Pro, so ${degrees}° cannot be set.`,
+  async setOutput(channel: number, enabled: boolean): Promise<void> {
+    assertChannel(channel);
+    this.outputOn[channel] = enabled;
+    // Register 11 carries both outputs; send the current pair.
+    await this.command(
+      `:w${GENX_PRO_REGISTERS.output}=${this.outputOn[0] ? 1 : 0},${this.outputOn[1] ? 1 : 0},`,
     );
   }
 
-  /** Set which outputs the arm sequence enables. */
-  async setOutputMask(out1: boolean, out2: boolean): Promise<void> {
-    const mask: [0 | 1, 0 | 1] = [out1 ? 1 : 0, out2 ? 1 : 0];
-    if (mask[0] === this.outputMask[0] && mask[1] === this.outputMask[1]) return;
-    this.outputMask = mask;
-    await this.command(`:w11=${mask[0]},${mask[1]},`);
+  /**
+   * Apply a complete channel state.
+   *
+   * The Gen X drives like any register device, so this is the plain sequential
+   * application — waveform first (duty depends on it elsewhere in the family),
+   * output last.
+   */
+  async applyStep(channel: number, step: ChannelStep): Promise<void> {
+    await applyStepSequentially(this, channel, step);
   }
 
-  /** Set the text on the device display. Also acts as an output gate. */
-  async setDisplayText(text: string): Promise<void> {
-    await this.command(`:n00=${text}`);
+  // ────────────────────────────────────────────────────────────────────────
+  // Per-output extras (vendor-labelled)
+  // ────────────────────────────────────────────────────────────────────────
+
+  /** Enable or disable gating for an output. */
+  async setGating(channel: number, on: boolean): Promise<void> {
+    assertChannel(channel);
+    const reg = channel === 0 ? GENX_PRO_REGISTERS.gatingOut1 : GENX_PRO_REGISTERS.gatingOut2;
+    await this.writeChannel(reg, channel, on ? 1 : 0);
+  }
+
+  /** Enable or disable Out 2 modulation. */
+  async setModulation(on: boolean): Promise<void> {
+    await this.writeChannel(GENX_PRO_REGISTERS.modulationOut2, 1, on ? 1 : 0);
+  }
+
+  /** Slave Out 2's frequency to Out 1 in hardware. */
+  async setSync(on: boolean): Promise<void> {
+    await this.writeChannel(GENX_PRO_REGISTERS.syncOut2, 1, on ? 1 : 0);
+  }
+
+  /** Invert an output's waveform. */
+  async setInversion(channel: number, on: boolean): Promise<void> {
+    assertChannel(channel);
+    await this.writeChannel(GENX_PRO_REGISTERS.inversion, channel, on ? 1 : 0);
+  }
+
+  /** Force low-frequency mode on an output (normally handled by setFrequency). */
+  async setLowFrequencyMode(channel: number, on: boolean): Promise<void> {
+    assertChannel(channel);
+    const reg = channel === 0 ? GENX_PRO_REGISTERS.lowFreqOut1 : GENX_PRO_REGISTERS.lowFreqOut2;
+    await this.writeChannel(reg, channel, on ? 1 : 0);
+    this.lowFreqMode[channel] = on;
+  }
+
+  /** Run the calibration routine. `load: "50ohm"` uses register 71, else 50. */
+  async calibrate(load: "none" | "50ohm" = "none"): Promise<void> {
+    const reg = load === "50ohm" ? GENX_PRO_REGISTERS.calibrate50Ohm : GENX_PRO_REGISTERS.calibrateNoLoad;
+    await this.command(`:w${reg}=1,,`);
+  }
+
+  /** Reset the device (`:w95=12021,`). */
+  async reset(): Promise<void> {
+    await this.command(`:w${GENX_PRO_REGISTERS.reset}=12021,`);
+    this.outputOn = [false, false];
+    this.lowFreqMode = [false, false];
+  }
+
+  /** Turn both outputs off. */
+  async allOutputsOff(): Promise<void> {
+    this.outputOn = [false, false];
+    await this.command(`:w${GENX_PRO_REGISTERS.output}=0,0,`);
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -506,19 +512,16 @@ export class GenXPro implements SignalGenerator {
     return this.command(command);
   }
 
-  private async sequence(commands: readonly string[]): Promise<void> {
-    for (const c of commands) await this.command(c);
-  }
-
-  private async resetRegister12(): Promise<void> {
-    await this.sequence([":w12=0,,", ":w12=,0,"]);
+  private async writeChannel(register: number, channel: number, value: number): Promise<void> {
+    await this.command(`:w${register}=${channelSlot(channel, value)}`);
   }
 
   /**
    * Write one command and wait for the device to answer before returning.
    *
    * The pacing is load-bearing: the Pro drops commands that arrive while it is
-   * still answering the previous one.
+   * still answering the previous one. A reply that misses its window is drained
+   * by {@link readReply} so it cannot answer the next command.
    */
   private async command(command: string): Promise<string> {
     return this.run(async () => {
@@ -546,22 +549,6 @@ export class GenXPro implements SignalGenerator {
     );
     return next;
   }
-
-  private rejectUnsupported(step: ChannelStep): void {
-    if (step.offsetV !== undefined && step.offsetV !== 0) {
-      throw new AwgError("DC offset is not supported on the Gen X Pro");
-    }
-    if (step.dutyCyclePct !== undefined && step.dutyCyclePct !== 50) {
-      throw new AwgError("Duty cycle is not adjustable on the Gen X Pro");
-    }
-    if (step.phaseDeg !== undefined && step.phaseDeg !== 0) {
-      throw new AwgError("Phase is not adjustable on the Gen X Pro");
-    }
-  }
-}
-
-function formatHz(hz: number): string {
-  return `${Number.isInteger(hz) ? hz : Number(hz.toFixed(6))} Hz`;
 }
 
 function assertChannel(channel: number): void {

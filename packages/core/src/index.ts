@@ -33,6 +33,14 @@ export type {
 export { DeviceRegistry } from "./registry.js";
 export type { DeviceDescriptor } from "./registry.js";
 
+export { runProgram } from "./program.js";
+export type {
+  ProgramStep,
+  ProgramOptions,
+  ProgramProgress,
+  ProgramResult,
+} from "./program.js";
+
 export { DEFAULT_CAPABILITIES } from "./capabilities.js";
 export type { Capabilities } from "./capabilities.js";
 

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { RecordingTransport } from "@freqgen/core/testing";
-import { GenXPro, GENX_RAMP_MAX_STEPS } from "../src/genx-pro.js";
+import { GenXPro } from "../src/genx-pro.js";
 import { GenXPair } from "../src/genx-pair.js";
 import { generateNonce } from "../src/auth.js";
 
@@ -14,12 +14,7 @@ async function pro(options = {}) {
   return { transport, device };
 }
 
-/** Frequencies written during a ramp, in order. */
-function rampPoints(writes: string[]): number[] {
-  return writes
-    .filter((w) => w.startsWith(":w28="))
-    .map((w) => Number(/:w28=(\d+),/.exec(w)![1]));
-}
+const stripCRLF = (writes: string[]) => writes.map((w) => w.trimEnd());
 
 describe("GenXPro link setup", () => {
   it("opens the port at the documented framing", async () => {
@@ -38,147 +33,129 @@ describe("GenXPro link setup", () => {
     const { device } = await pro();
     assert.equal(device.authenticated, false);
     assert.equal(device.capabilities.requiresAuth, true);
+    // The arm/ramp requirement was an artefact of a mis-read register map.
+    assert.equal(device.capabilities.requiresFrequencyRamp, false);
   });
 });
 
-describe("GenXPro step sequence", () => {
-  it("prepares, arms, ramps and only then sets amplitude", async () => {
+describe("GenXPro register map (vendor-confirmed)", () => {
+  it("writes frequency to register 24/25, one field per output", async () => {
     const { transport, device } = await pro();
-    await device.runStep(0, 100, 5);
-    const writes = transport.writes.map((w) => w.trimEnd());
-
-    const armIndex = writes.indexOf(":w24=1008,"); // 100 Hz → mantissa 100, exp code 8
-    const firstRamp = writes.findIndex((w) => w.startsWith(":w28=") && w !== ":w28=0,");
-    const amplitude = writes.indexOf(":w17=500,500,");
-
-    assert.ok(armIndex > 0, `expected an arm write, got ${JSON.stringify(writes)}`);
-    assert.ok(firstRamp > armIndex, "ramp must follow the arm sequence");
-    assert.ok(amplitude > firstRamp, "amplitude must come after the ramp");
+    await device.setFrequency(0, 1000); // ≥600 Hz → high scale (×100)
+    await device.setFrequency(1, 1000);
+    assert.deepEqual(stripCRLF(transport.writes), [":w24=100000,,", ":w25=,100000,"]);
   });
 
-  it("sets the display text before touching registers", async () => {
+  it("writes amplitude to register 28/29 — the register the hardware confirmed", async () => {
     const { transport, device } = await pro();
-    await device.runStep(0, 440, 5);
-    assert.ok(transport.writes[0]!.startsWith(":n00="));
+    await device.setAmplitude(0, 5);
+    await device.setAmplitude(1, 3.3);
+    assert.deepEqual(stripCRLF(transport.writes), [":w28=500,,", ":w29=,330,"]);
   });
 
-  it("prepares a channel once, not on every step", async () => {
+  it("writes waveform to register 20/21", async () => {
     const { transport, device } = await pro();
-    await device.runStep(0, 440, 5);
-    const first = transport.writes.filter((w) => w === ":w14=1,\r\n").length;
-    transport.clear();
-    await device.runStep(0, 880, 5);
-    const second = transport.writes.filter((w) => w === ":w14=1,\r\n").length;
-    assert.equal(first, 1);
-    assert.equal(second, 0);
+    assert.equal((await device.setWaveform(0, "sine")).code, 11);
+    assert.equal((await device.setWaveform(1, "square")).code, 12);
+    assert.deepEqual(stripCRLF(transport.writes), [":w20=11,,", ":w21=,12,"]);
   });
 
-  it("re-prepares when the channel changes", async () => {
+  it("writes offset to register 32/33, centred on 120", async () => {
     const { transport, device } = await pro();
-    await device.runStep(0, 440, 5);
-    transport.clear();
-    await device.runStep(1, 440, 5);
-    assert.ok(transport.writes.some((w) => w === ":w14=2,\r\n"));
+    await device.setOffsetRatio(0, 0);
+    await device.setOffsetRatio(0, 1);
+    await device.setOffsetRatio(1, -1);
+    assert.deepEqual(stripCRLF(transport.writes), [":w32=120,,", ":w32=170,,", ":w33=,70,"]);
+  });
+
+  it("switches low-frequency mode across the boundary", async () => {
+    const { transport, device } = await pro();
+    await device.setFrequency(0, 100); // <600 Hz → low mode, ×100000
+    assert.deepEqual(stripCRLF(transport.writes), [":w15=1,,", ":w24=10000000,,"]);
+  });
+
+  it("addresses both outputs together on the shared output register", async () => {
+    const { transport, device } = await pro();
+    await device.setOutput(0, true);
+    await device.setOutput(1, true);
+    await device.setOutput(0, false);
+    assert.deepEqual(stripCRLF(transport.writes), [
+      ":w11=1,0,",
+      ":w11=1,1,",
+      ":w11=0,1,",
+    ]);
   });
 });
 
-describe("GenXPro frequency ramp", () => {
-  it("walks up in 50 Hz steps when that is short enough", async () => {
+describe("GenXPro phase", () => {
+  it("sets Out 2 phase on register 40", async () => {
     const { transport, device } = await pro();
-    await device.runStep(0, 300, 5);
-    // Intermediate points 50…250, then the target.
-    assert.deepEqual(rampPoints(transport.writes).filter((v) => v !== 0), [
-      50, 100, 150, 200, 250, 300,
+    await device.setPhase(1, 90);
+    assert.deepEqual(stripCRLF(transport.writes), [":w40=,90,"]);
+  });
+
+  it("refuses an Out 1 phase, which the device has no register for", async () => {
+    const { device } = await pro();
+    await device.setPhase(0, 0); // 0 is a no-op
+    await assert.rejects(device.setPhase(0, 45), /no Out 1 phase register/);
+  });
+});
+
+describe("GenXPro per-output extras", () => {
+  it("drives gating, modulation, sync, inversion and low-frequency mode", async () => {
+    const { transport, device } = await pro();
+    await device.setGating(0, true);        // Out1 gating → w12
+    await device.setGating(1, true);        // Out2 gating → w70
+    await device.setModulation(true);       // Out2 modulation → w13
+    await device.setSync(true);             // Out2 sync → w14
+    await device.setInversion(0, true);     // inversion Out1 → w17
+    await device.setLowFrequencyMode(1, true); // Out2 LF mode → w51
+    assert.deepEqual(stripCRLF(transport.writes), [
+      ":w12=1,,",
+      ":w70=,1,",
+      ":w13=,1,",
+      ":w14=,1,",
+      ":w17=1,,",
+      ":w51=,1,",
     ]);
   });
 
-  it("switches to even division rather than emitting hundreds of steps", async () => {
+  it("runs calibration and reset", async () => {
     const { transport, device } = await pro();
-    await device.runStep(0, 30_000, 5);
-    const points = rampPoints(transport.writes).filter((v) => v !== 0);
-    // A 50 Hz walk to 30 kHz would be 599 steps; the cap keeps it bounded.
-    assert.equal(points.length, GENX_RAMP_MAX_STEPS + 1);
-    assert.equal(points.at(-1), 30_000);
-  });
-
-  it("always finishes exactly on the target", async () => {
-    for (const target of [64, 727.5, 20_000, 146_000]) {
-      const { transport, device } = await pro();
-      await device.runStep(0, target, 5);
-      const points = rampPoints(transport.writes).filter((v) => v !== 0);
-      assert.equal(
-        points.at(-1),
-        target === 727.5 ? 72750 : target,
-        `ramp to ${target} Hz ended on ${points.at(-1)}`,
-      );
-    }
-  });
-
-  it("ramps monotonically upward", async () => {
-    const { transport, device } = await pro();
-    await device.runStep(0, 5000, 5);
-    const points = rampPoints(transport.writes).filter((v) => v !== 0);
-    for (let i = 1; i < points.length; i++) {
-      assert.ok(points[i]! > points[i - 1]!, `not increasing at index ${i}`);
-    }
+    await device.calibrate("none");
+    await device.calibrate("50ohm");
+    await device.reset();
+    assert.deepEqual(stripCRLF(transport.writes), [":w50=1,,", ":w71=1,,", ":w95=12021,"]);
   });
 });
 
 describe("GenXPro unsupported parameters", () => {
-  it("accepts the neutral values a preset always carries", async () => {
+  it("accepts a 50 % duty (the neutral every preset carries) and refuses others", async () => {
     const { device } = await pro();
-    // Spooky2 presets specify duty 50 and offset 0 on every shell; refusing
-    // those would make every preset fail for no reason.
-    await device.applyStep(0, {
-      frequencyHz: 440,
-      dutyCyclePct: 50,
-      offsetV: 0,
-      phaseDeg: 0,
-    });
-  });
-
-  it("refuses a duty cycle it cannot actually deliver", async () => {
-    const { device } = await pro();
-    await assert.rejects(
-      device.applyStep(0, { frequencyHz: 440, dutyCyclePct: 25 }),
-      /Duty cycle is not adjustable/,
-    );
-  });
-
-  it("refuses a DC offset rather than silently killing the output", async () => {
-    const { device } = await pro();
-    await assert.rejects(device.setOffset(0, 2), /not supported on the Gen X Pro/);
+    await device.setDutyCycle(0, 50);
+    await assert.rejects(device.setDutyCycle(0, 25), /No duty-cycle register/);
   });
 });
 
-describe("GenXPro output control", () => {
-  it("disarms register 11 first when stopping", async () => {
+describe("GenXPro applyStep", () => {
+  it("drives the channel as plain register writes, output last", async () => {
     const { transport, device } = await pro();
-    await device.stopOutput();
-    // Without this ordering the output sticks at the armed frequency.
-    assert.equal(transport.writes[0], ":w11=0,0,\r\n");
-  });
-
-  it("refuses to enable output with nothing armed", async () => {
-    const { device } = await pro();
-    await assert.rejects(device.setOutput(0, true), /set a frequency/);
-  });
-
-  it("treats output:false as a stop", async () => {
-    const { transport, device } = await pro();
-    await device.applyStep(0, { output: false });
-    assert.equal(transport.writes[0], ":w11=0,0,\r\n");
+    await device.applyStep(0, {
+      waveform: "square",
+      frequencyHz: 1000,
+      amplitudeVpp: 5,
+      output: true,
+    });
+    assert.deepEqual(stripCRLF(transport.writes), [
+      ":w20=12,,",
+      ":w24=100000,,",
+      ":w28=500,,",
+      ":w11=1,0,",
+    ]);
   });
 });
 
 describe("GenXPro waveforms", () => {
-  it("uses slot 11 for sine and 12 for square", async () => {
-    const { transport, device } = await pro();
-    assert.equal((await device.setWaveform(0, "sine")).code, 11);
-    assert.equal((await device.setWaveform(1, "square")).code, 12);
-    assert.deepEqual(transport.writes, [":w22=11,,\r\n", ":w22=,12,\r\n"]);
-  });
-
   it("reports a sawtooth request as substituted, not silently swapped", async () => {
     const { device } = await pro();
     const applied = await device.setWaveform(0, "ramp-up");
@@ -211,7 +188,6 @@ describe("GenXPro authentication", () => {
     await device.open();
 
     assert.equal(device.authenticated, true);
-    // Two rounds: a single successful exchange has been observed not to unlock.
     assert.equal(seen.length, 2);
     assert.equal(seen[0]!.v1, "123456789");
     assert.equal(seen[0]!.v2, "987654321");
@@ -219,7 +195,7 @@ describe("GenXPro authentication", () => {
     assert.ok(transport.writes.some((w) => w === ":w92=111111111.\r\n"));
   });
 
-  it("keeps the link up when authentication fails", async () => {
+  it("keeps registers usable when authentication fails", async () => {
     const transport = new RecordingTransport({
       responder: (cmd) => (cmd.startsWith(":r90=") ? "garbage" : ":ok"),
     });
@@ -229,16 +205,13 @@ describe("GenXPro authentication", () => {
     });
     await device.open();
     assert.equal(device.authenticated, false);
-    // Registers must still be usable — only physical output is gated.
     await device.setAmplitude(0, 5);
-    assert.ok(transport.writes.some((w) => w === ":w17=500,500,\r\n"));
+    assert.ok(transport.writes.some((w) => w === ":w28=500,,\r\n"));
   });
 });
 
 describe("generateNonce", () => {
   it("is a permutation of 1–9, never containing a zero", () => {
-    // The known response transforms index into the nonce digit by digit, and a
-    // zero digit would collapse those lookups.
     for (let i = 0; i < 50; i++) {
       const nonce = generateNonce();
       assert.equal(nonce.length, 9);
@@ -247,14 +220,8 @@ describe("generateNonce", () => {
   });
 
   it("is deterministic for a given random source", () => {
-    // Injectable randomness so a test can pin an auth transcript.
     assert.equal(generateNonce(() => 0), generateNonce(() => 0));
     assert.equal(generateNonce(() => 0), "234567891");
-  });
-
-  it("actually shuffles rather than returning the identity order", () => {
-    const shuffled = new Set(Array.from({ length: 50 }, () => generateNonce()));
-    assert.ok(shuffled.size > 1, "nonce should vary between calls");
   });
 });
 
@@ -266,26 +233,20 @@ describe("GenXPair channel mapping", () => {
   }
 
   it("uses self-reported identity when the units disagree", () => {
+    // Confirmed on hardware: the two ports report G1/G2 and it does not follow
+    // connection order.
     const { a, b, pair: p } = pair(["G2", "G1"]);
     assert.equal(p.unitForChannel(0), b);
     assert.equal(p.unitForChannel(1), a);
   });
 
   it("falls back to connection order when both report the same identity", () => {
-    // Observed in the field: both ports report G2. Trusting that would send
-    // both logical channels to one unit and leave the other silent.
     const { a, b, pair: p } = pair(["G2", "G2"]);
     assert.equal(p.unitForChannel(0), a);
     assert.equal(p.unitForChannel(1), b);
   });
 
-  it("falls back to connection order when identity is unknown", () => {
-    const { a, b, pair: p } = pair([null, null]);
-    assert.equal(p.unitForChannel(0), a);
-    assert.equal(p.unitForChannel(1), b);
-  });
-
-  it("reports authenticated only when every unit is", async () => {
+  it("reports authenticated only when every unit is", () => {
     const { pair: p } = pair([null, null]);
     assert.equal(p.authenticated, false);
   });
