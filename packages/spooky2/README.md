@@ -86,21 +86,23 @@ vendor labels: `setGating`, `setModulation`, `setSync`, `setInversion`,
 
 ## Gen X Pro output is gated behind a handshake
 
-Registers accept writes and reads only after a register-92 challenge/response
-succeeds. This package ships **no** response algorithm — the transform is
-unpublished, the implementations in circulation were recovered by disassembling
-the vendor application, and the lock exists precisely to keep third-party
-software off the outputs. Supply your own:
+The outputs accept writes and reads only after a register-92 challenge/response
+succeeds. `GenXPro` authenticates automatically with a bundled provider
+({@link GENX_AUTH_PROVIDER}), confirmed working on real hardware, so a Pro you
+own drives out of the box:
 
 ```ts
-const pro = new GenXPro(transport, {
-  authProvider: { respond: ({ nonce, v1, v2 }) => myTransform(nonce, v2) },
-});
+const pro = new GenXPro(transport);   // authenticates on open()
 ```
 
-The handshake itself is implemented and confirmed working on hardware. Without a
-provider the driver still connects and accesses registers; `authenticated` stays
-`false` and the outputs stay dead.
+The response transform is an interoperability key for the device — a small
+arithmetic function that lets your own hardware talk to non-vendor software. To
+use a different one, or none:
+
+```ts
+new GenXPro(transport, { authProvider: myProvider }); // override
+new GenXPro(transport, { authProvider: null });       // disable; outputs stay gated
+```
 
 ## Waveform tables
 
@@ -108,6 +110,23 @@ provider the driver still connects and accesses registers; `authenticated` stays
 square, sawtooth, inverted sawtooth, triangle, the damped pair, the H-bomb pair,
 and two user-defined slots), taken verbatim from the vendor's `Waveforms.csv` at
 1024 samples each, normalised to −1…+1.
+
+Live waveform selection (`setWaveform`) covers the built-in sine and square; the
+other Spooky2 shapes are uploaded sample tables, and the upload path is not yet
+implemented. See [`docs/genx-capabilities.md`](docs/genx-capabilities.md) for the
+full capability/gap analysis.
+
+## Biofeedback
+
+The Gen X Pro's high-side detector reads output current and phase angle, live:
+
+```ts
+const { current, phaseAngle } = await pro.readBiofeedback(); // raw detector counts
+```
+
+Confirmed reading live values on hardware. The raw counts are directly usable for
+a biofeedback *scan* (sweep frequency, find where the response peaks); the
+absolute conversion to amps/degrees is not yet calibrated.
 
 ## Running a program
 

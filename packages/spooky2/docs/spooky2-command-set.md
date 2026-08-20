@@ -81,8 +81,7 @@ Addressing one output leaves the other field empty (`:w11=1,,` / `:w11=,1,`).
 | Register | Parameter | Vendor label |
 | --- | --- | --- |
 | `11` | Output on/off | " Out 1 On" / " Out 1 Off" / " Out 2 On" / " Out 2 Off" |
-| `12` | **Out 1 gating** | " Out 1 Gating On/Off" |
-| `70` | **Out 2 gating** | " Out 2 Gating On/Off" |
+| `12` | **Gating, both outputs** (two fields) | vendor label says "Out 1 Gating", but a capture shows `:w12=<a>,<b>,` driving *both* outputs; register 70 is never sent |
 | `13` | **Out 2 modulation** | " Out 2 Modulation On/Off" |
 | `14` | **Out 2 sync** | " Out 2 Sync On/Off" |
 | `15` | **Out 1 low-frequency mode** | " Out 1 Low Frequency mode On/Off" |
@@ -132,21 +131,35 @@ vendor's labels neither confirm nor refute it. The stop sequence the binary does
 show is simply `:w28=0,` `:w29=0,` `:w11=0,0,` — zero both amplitudes, then drop
 both outputs.
 
-### GX offline programming (device memory)
+### GX waveform upload & offline programming — decoded from a live capture
 
-A second command group loads programs into the generator for standalone running:
+A 2026-08-15 serial capture of Spooky2 (biofeedback scan + wobble + running
+programs + "save to device") settled these. The **live-control register map is
+complete** — Spooky2 uses no `:w`/`:r` register this driver doesn't already map.
+The additional commands are the upload/offline group:
 
-| Command | Purpose |
-| --- | --- |
-| `:w22` | Writing waveform |
-| `:r10` | Reading waveform |
-| `:r11` | Reading amplitude / amps |
-| `:r12` | Reading angle |
-| — | Reading/Writing titlebar, program name |
-| — | Gate parameters: `[F1on],[F2off],[F2on],[F2off],…` |
-| — | Program: `[Waveform#],[Amplitude],[Offset],[Dwell],[Frequency Count],[Frequencies]` |
-| `:w63=111000` / `:w63=111999` | frequency-list capacity (max 200 frequencies) |
-| `:w64=10000001,` / `:w64=18888881,` | (adjacent to the auth cluster) |
+| Command | Purpose | Format |
+| --- | --- | --- |
+| `:a<slot>=<samples>,` | **Waveform upload** | 1024 samples, 10-bit (0–1023, mid 512), whole table in one command |
+| `:n00=<text>` | Display text | e.g. `Port 3 - General Biofeedback` |
+| `:n<slot>=<name>` | Offline program name | `:n06=(-)-beta-Elemene` |
+| `:p<slot>=<wfSlot>,<amp>,<offset>,<phase>,…` | Offline program parameters | `:p06=46,2000,120,180,7,…` (offset 120 = centre) |
+| `:g<slot>=<schedule>` | Offline gating schedule | `:g06=0,0,0,…` (all-zero = none) |
+
+Waveform slots seen uploaded: 11–21, 24, 25, 45–47. `:w20=<slot>` / `:w21=<slot>`
+then select a slot for live output (11 = sine, 12 = square, 13 = rising ramp).
+
+The biofeedback scan is a host-side loop — `:w24=<freq>` then `:r11=` (current)
+and `:r12=` (phase), swept across a range; Spooky2's displayed value ≈ `r11/100`,
+and it flags a "hit" where that deviates from a running average.
+
+The `:p` **frequency field** is **integer nanohertz** (`round(Hz × 1e9)`) — a
+different encoding from the live `w24` exponent form, proven by matching the
+stored values against the scan's own hit frequencies (`1408287935392270` ÷ 1e9 =
+1408287.93539227 Hz). Full `:p` layout:
+`:p<slot>=<waveformSlot>,<amp×100>,<offset=120>,<dwell>,<count>,<f0×1e9>,…,`.
+`uploadProgram()`, `uploadWaveform()` (`:a`) and `setDisplayText()` (`:n00`) are
+all implemented; `writeOfflineSlot()` remains for raw field access.
 
 ### Authentication
 

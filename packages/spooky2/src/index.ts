@@ -37,21 +37,36 @@ export type { GenXClassicOptions } from "./genx-classic.js";
 export {
   GenXPro,
   GENX_PRO_REGISTERS,
-  GENX_FREQ_SCALE_HIGH,
-  GENX_FREQ_SCALE_LOW,
-  GENX_FREQ_LOW_BOUNDARY_HZ,
   GENX_AMPLITUDE_SCALE,
+  GENX_OFFSET_CENTRE,
+  GENX_OFFSET_SPAN,
 } from "./genx-pro.js";
-export type { GenXProOptions } from "./genx-pro.js";
+export type { GenXProOptions, BiofeedbackSample } from "./genx-pro.js";
 
 export { GenXPair } from "./genx-pair.js";
 
 export { generateNonce } from "./auth.js";
 export type { AuthProvider, AuthChallenge } from "./auth.js";
 
-export { amplitudeRegisterValue, channelSlot } from "./genx-wire.js";
+export { genXAuthResponse, GENX_AUTH_PROVIDER } from "./genx-auth-transform.js";
+
+export {
+  amplitudeRegisterValue,
+  channelSlot,
+  outField,
+  encodeGenXFrequency,
+  decodeGenXFrequency,
+} from "./genx-wire.js";
 
 export { SPOOKY2_DEVICES } from "./devices.js";
+
+export {
+  spectrum,
+  spectrumFrequencies,
+  frequencySpacing,
+  spectrumPercent,
+} from "./spectrum.js";
+export type { SpectrumParameters } from "./spectrum.js";
 
 export {
   SPOOKY2_WAVEFORMS,

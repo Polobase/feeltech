@@ -28,10 +28,11 @@
  * ## Output is gated behind authentication
  *
  * Registers accept writes and answer reads only after the register-92 handshake
- * succeeds; before that every data register answers `:err`. This package ships
- * no response algorithm — see `auth.ts` for why, and for the {@link AuthProvider}
- * hook that supplies one. The handshake itself is implemented and confirmed
- * working against real hardware.
+ * succeeds; before that every data register answers `:err`. The response is
+ * computed by the bundled {@link GENX_AUTH_PROVIDER} (see
+ * `genx-auth-transform.ts`), so a Pro authenticates and drives out of the box.
+ * Pass a different `authProvider`, or `null`, to override or disable it. The
+ * whole handshake is confirmed working against real hardware.
  */
 
 import {
@@ -51,7 +52,13 @@ import {
 } from "@freqgen/core";
 
 import { generateNonce, type AuthChallenge, type AuthProvider } from "./auth.js";
-import { channelSlot } from "./genx-wire.js";
+import { GENX_AUTH_PROVIDER } from "./genx-auth-transform.js";
+import {
+  channelSlot,
+  encodeGenXFrequency,
+  outField,
+  amplitudeRegisterValue,
+} from "./genx-wire.js";
 
 /**
  * Register map, from Spooky2's own debug labels.
@@ -63,10 +70,12 @@ import { channelSlot } from "./genx-wire.js";
 export const GENX_PRO_REGISTERS = {
   /** Output on/off. `:w11=1,,` Out1 on, `:w11=,1,` Out2 on, `:w11=0,0,` both off. */
   output: 11,
-  /** Out 1 gating on/off. */
-  gatingOut1: 12,
-  /** Out 2 gating on/off. */
-  gatingOut2: 70,
+  /**
+   * Gating on/off — **both** outputs, two fields (Out1, Out2), like {@link output}.
+   * A Spooky2 capture uses `:w12=<a>,<b>,`; register 70 (a vendor label called it
+   * "Out 2 gating") is never sent, so gating is this single two-field register.
+   */
+  gating: 12,
   /** Out 2 modulation on/off. */
   modulationOut2: 13,
   /** Out 2 sync on/off. */
@@ -101,20 +110,11 @@ export const GENX_PRO_REGISTERS = {
   calibrate50Ohm: 71,
   /** Device reset — written as `:w95=12021,`. */
   reset: 95,
+  /** Commit — written as `:w96=12321,`; seen right after writing generator memory. */
+  commit: 96,
   authChallenge: 90,
   authResponse: 92,
 } as const;
-
-/**
- * Frequency scale, **mirrored from the XM — not scope-confirmed on the GX.**
- *
- * The XM sends Hz×100 above a boundary and Hz×100000 below it, flipping a scale
- * register; the GX has a "low frequency mode" register (`:w15`/`:w51`) that is
- * the obvious counterpart. Adjust once measured.
- */
-export const GENX_FREQ_SCALE_HIGH = 100;
-export const GENX_FREQ_SCALE_LOW = 100_000;
-export const GENX_FREQ_LOW_BOUNDARY_HZ = 600;
 
 /** Amplitude counts per volt. Mirrored from the XM (centivolts); not confirmed. */
 export const GENX_AMPLITUDE_SCALE = 100;
@@ -134,16 +134,29 @@ const GENX_WAVEFORMS: readonly WaveformKind[] = ["sine", "square"];
 
 export interface GenXProOptions {
   /**
-   * Supplies the register-92 response. Without one the driver connects and
-   * reads/writes registers, but the outputs stay gated.
+   * Supplies the register-92 response.
+   *
+   * Defaults to the bundled {@link GENX_AUTH_PROVIDER}, so a Gen X Pro
+   * authenticates and its outputs drive out of the box. Pass your own to
+   * override it, or `null` to disable authentication (the driver still connects
+   * and accesses registers, but the outputs stay gated).
    */
-  authProvider?: AuthProvider;
+  authProvider?: AuthProvider | null;
   /** How long to wait for `:ok` / `:err` / data after a write. Default: 350 ms. */
   replyTimeoutMs?: number;
   /** Source of randomness for the auth nonce. Default: `Math.random`. */
   random?: () => number;
   debug?: boolean;
   logger?: (message: string, ...args: unknown[]) => void;
+}
+
+/** One reading from {@link GenXPro.biofeedbackScan}: the response at a frequency. */
+export interface BiofeedbackSample {
+  hz: number;
+  /** Raw current detector counts, or `null` if the read failed. */
+  current: number | null;
+  /** Raw phase-angle detector counts, or `null` if the read failed. */
+  phaseAngle: number | null;
 }
 
 export class GenXPro implements SignalGenerator {
@@ -153,7 +166,6 @@ export class GenXPro implements SignalGenerator {
   authenticated = false;
 
   private commandLock = Promise.resolve();
-  private lowFreqMode: [boolean, boolean] = [false, false];
   private amplitude: [number, number] = [0, 0];
   private outputOn: [boolean, boolean] = [false, false];
   private opts: Required<Omit<GenXProOptions, "authProvider" | "logger">> & {
@@ -165,13 +177,16 @@ export class GenXPro implements SignalGenerator {
     public readonly transport: Transport,
     options: GenXProOptions = {},
   ) {
+    // undefined → bundled provider; null → no auth; a provider → that provider.
+    const authProvider =
+      options.authProvider === undefined
+        ? GENX_AUTH_PROVIDER
+        : (options.authProvider ?? undefined);
     this.opts = {
       replyTimeoutMs: options.replyTimeoutMs ?? 350,
       random: options.random ?? Math.random,
       debug: options.debug ?? false,
-      ...(options.authProvider !== undefined
-        ? { authProvider: options.authProvider }
-        : {}),
+      ...(authProvider !== undefined ? { authProvider } : {}),
       logger:
         options.logger ??
         ((msg: string, ...rest: unknown[]) =>
@@ -286,21 +301,26 @@ export class GenXPro implements SignalGenerator {
   }
 
   /**
-   * Register bootstrap the vendor sends immediately after unlocking.
+   * Register bootstrap after unlocking.
    *
-   * These are the exact writes `Spooky.exe` issues on connect: clear Out 2 sync,
-   * clear inversion, zero both frequencies, enable low-frequency mode on both,
-   * centre both offsets. Kept verbatim.
+   * Close to the writes `Spooky.exe` issues on connect — clear Out 2 sync,
+   * clear inversion, zero both frequencies, centre both offsets — with one
+   * deliberate change: the low-frequency-mode registers are set to **0**, not 1.
+   *
+   * At `w15/w51 = 0` the exponent frequency encoding (see
+   * {@link encodeGenXFrequency}) decodes directly on the device — a register
+   * value of `10008` reads back as 1000 Hz. At `= 1` the same value reads ten
+   * times lower. Since the exponent code already spans the whole frequency
+   * range, 0 is the single mode this driver needs. Confirmed on hardware.
    */
   private async postAuthInit(): Promise<void> {
-    this.lowFreqMode = [true, true];
     for (const cmd of [
       ":w14=0,",
       ":w17=0,0,",
       ":w24=0,",
       ":w25=0,",
-      ":w15=1,1,",
-      ":w24=00,",
+      ":w15=0,",
+      ":w51=0,",
       ":w32=120,",
       ":w33=120,",
     ]) {
@@ -319,7 +339,7 @@ export class GenXPro implements SignalGenerator {
     assertChannel(channel);
     const reg = channel === 0 ? GENX_PRO_REGISTERS.waveformOut1 : GENX_PRO_REGISTERS.waveformOut2;
     if (typeof waveform === "number") {
-      await this.writeChannel(reg, channel, waveform);
+      await this.writeOut(reg, waveform);
       const kind = (Object.keys(GENX_WAVEFORM_SLOTS) as WaveformKind[]).find(
         (k) => GENX_WAVEFORM_SLOTS[k] === waveform,
       );
@@ -339,30 +359,23 @@ export class GenXPro implements SignalGenerator {
       );
     }
     const code = GENX_WAVEFORM_SLOTS[actual]!;
-    await this.writeChannel(reg, channel, code);
+    await this.writeOut(reg, code);
     return { requested: waveform, actual, substituted: direct === undefined, code };
   }
 
   /**
    * Set the output frequency.
    *
-   * Switches low-frequency mode across {@link GENX_FREQ_LOW_BOUNDARY_HZ}, the
-   * way the XM does — see the scale-factor caveat at the top of this file.
+   * The value is exponent-encoded (see {@link encodeGenXFrequency}) and written
+   * to the output's own register (24 for Out 1, 25 for Out 2). Confirmed on
+   * hardware: the device display reads back exactly the requested frequency.
    */
   async setFrequency(channel: number, hz: number): Promise<void> {
     assertChannel(channel);
     assertFinite("frequency", hz);
     if (hz < 0) throw new AwgError(`frequency must be >= 0 Hz, got ${hz}`);
-
-    const low = hz < GENX_FREQ_LOW_BOUNDARY_HZ;
-    if (this.lowFreqMode[channel] !== low) {
-      const reg = channel === 0 ? GENX_PRO_REGISTERS.lowFreqOut1 : GENX_PRO_REGISTERS.lowFreqOut2;
-      await this.writeChannel(reg, channel, low ? 1 : 0);
-      this.lowFreqMode[channel] = low;
-    }
-    const scale = low ? GENX_FREQ_SCALE_LOW : GENX_FREQ_SCALE_HIGH;
     const reg = channel === 0 ? GENX_PRO_REGISTERS.frequencyOut1 : GENX_PRO_REGISTERS.frequencyOut2;
-    await this.writeChannel(reg, channel, Math.round(hz * scale));
+    await this.writeOut(reg, encodeGenXFrequency(hz));
   }
 
   async setAmplitude(channel: number, volts: number): Promise<void> {
@@ -371,7 +384,7 @@ export class GenXPro implements SignalGenerator {
     if (volts < 0) throw new AwgError(`amplitude must be >= 0 V, got ${volts}`);
     this.amplitude[channel] = volts;
     const reg = channel === 0 ? GENX_PRO_REGISTERS.amplitudeOut1 : GENX_PRO_REGISTERS.amplitudeOut2;
-    await this.writeChannel(reg, channel, Math.round(volts * GENX_AMPLITUDE_SCALE));
+    await this.writeOut(reg, amplitudeRegisterValue(volts));
   }
 
   /**
@@ -385,7 +398,7 @@ export class GenXPro implements SignalGenerator {
     assertFinite("offset ratio", ratio);
     const clamped = Math.max(-1, Math.min(1, ratio));
     const reg = channel === 0 ? GENX_PRO_REGISTERS.offsetOut1 : GENX_PRO_REGISTERS.offsetOut2;
-    await this.writeChannel(reg, channel, GENX_OFFSET_CENTRE + Math.round(clamped * GENX_OFFSET_SPAN));
+    await this.writeOut(reg, GENX_OFFSET_CENTRE + Math.round(clamped * GENX_OFFSET_SPAN));
   }
 
   /** Set the DC offset in volts, converted against the channel's amplitude. */
@@ -418,7 +431,7 @@ export class GenXPro implements SignalGenerator {
       );
     }
     const normalised = ((degrees % 360) + 360) % 360;
-    await this.writeChannel(GENX_PRO_REGISTERS.phaseOut2, channel, Math.round(normalised));
+    await this.writeOut(GENX_PRO_REGISTERS.phaseOut2, Math.round(normalised));
   }
 
   /** Duty cycle is not adjustable — no register for it exists. */
@@ -453,54 +466,310 @@ export class GenXPro implements SignalGenerator {
   // Per-output extras (vendor-labelled)
   // ────────────────────────────────────────────────────────────────────────
 
-  /** Enable or disable gating for an output. */
+  /**
+   * Enable or disable gating for an output.
+   *
+   * Register 12 carries both outputs in two fields (`:w12=<Out1>,<Out2>,`),
+   * confirmed by a Spooky2 capture — so this is a two-field write like
+   * {@link setOutput}, leaving the other output's gating untouched.
+   */
   async setGating(channel: number, on: boolean): Promise<void> {
     assertChannel(channel);
-    const reg = channel === 0 ? GENX_PRO_REGISTERS.gatingOut1 : GENX_PRO_REGISTERS.gatingOut2;
-    await this.writeChannel(reg, channel, on ? 1 : 0);
+    await this.command(`:w${GENX_PRO_REGISTERS.gating}=${channelSlot(channel, on ? 1 : 0)}`);
   }
 
   /** Enable or disable Out 2 modulation. */
   async setModulation(on: boolean): Promise<void> {
-    await this.writeChannel(GENX_PRO_REGISTERS.modulationOut2, 1, on ? 1 : 0);
+    await this.writeOut(GENX_PRO_REGISTERS.modulationOut2, on ? 1 : 0);
   }
 
   /** Slave Out 2's frequency to Out 1 in hardware. */
   async setSync(on: boolean): Promise<void> {
-    await this.writeChannel(GENX_PRO_REGISTERS.syncOut2, 1, on ? 1 : 0);
+    await this.writeOut(GENX_PRO_REGISTERS.syncOut2, on ? 1 : 0);
   }
 
-  /** Invert an output's waveform. */
+  /**
+   * Invert an output's waveform.
+   *
+   * Register 17 carries both outputs (the vendor init writes `:w17=0,0,`), so
+   * this is one of the few two-field writes; the other output is left untouched.
+   */
   async setInversion(channel: number, on: boolean): Promise<void> {
     assertChannel(channel);
-    await this.writeChannel(GENX_PRO_REGISTERS.inversion, channel, on ? 1 : 0);
+    await this.command(`:w${GENX_PRO_REGISTERS.inversion}=${channelSlot(channel, on ? 1 : 0)}`);
   }
 
-  /** Force low-frequency mode on an output (normally handled by setFrequency). */
+  /**
+   * Force low-frequency mode on an output.
+   *
+   * The driver keeps this at 0 (see {@link postAuthInit}), where the exponent
+   * frequency encoding decodes directly. Setting it to 1 shifts decoded
+   * frequencies down by a decade, so only use it if you also compensate.
+   */
   async setLowFrequencyMode(channel: number, on: boolean): Promise<void> {
     assertChannel(channel);
     const reg = channel === 0 ? GENX_PRO_REGISTERS.lowFreqOut1 : GENX_PRO_REGISTERS.lowFreqOut2;
-    await this.writeChannel(reg, channel, on ? 1 : 0);
-    this.lowFreqMode[channel] = on;
+    await this.writeOut(reg, on ? 1 : 0);
   }
 
   /** Run the calibration routine. `load: "50ohm"` uses register 71, else 50. */
   async calibrate(load: "none" | "50ohm" = "none"): Promise<void> {
     const reg = load === "50ohm" ? GENX_PRO_REGISTERS.calibrate50Ohm : GENX_PRO_REGISTERS.calibrateNoLoad;
-    await this.command(`:w${reg}=1,,`);
+    await this.writeOut(reg, 1);
   }
 
   /** Reset the device (`:w95=12021,`). */
   async reset(): Promise<void> {
-    await this.command(`:w${GENX_PRO_REGISTERS.reset}=12021,`);
+    await this.writeOut(GENX_PRO_REGISTERS.reset, 12021);
     this.outputOn = [false, false];
-    this.lowFreqMode = [false, false];
+  }
+
+  /**
+   * Commit written generator memory (`:w96=12321,`).
+   *
+   * Spooky2 sends this after writing an offline program to memory; it appears to
+   * finalise the write. {@link uploadProgram} calls it automatically.
+   */
+  async commitOfflineMemory(): Promise<void> {
+    await this.writeOut(GENX_PRO_REGISTERS.commit, 12321);
   }
 
   /** Turn both outputs off. */
   async allOutputsOff(): Promise<void> {
     this.outputOn = [false, false];
     await this.command(`:w${GENX_PRO_REGISTERS.output}=0,0,`);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Biofeedback
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Read the high-side biofeedback detector: output current and phase angle.
+   *
+   * These come from the read-side registers `:r11` (current) and `:r12` (phase),
+   * confirmed to return live values on a real unit. The device specifies 16-bit
+   * detection at 3.4 µA and 0.0015° resolution over 100 Hz–40 MHz, but the raw
+   * register value is **not** a simple `count × resolution` — the conversion to
+   * amps and degrees is not yet calibrated, so the raw integers are returned as
+   * they are. They are still directly usable for *relative* measurements: a
+   * biofeedback scan looks for the frequency where the response changes, which
+   * needs only comparison, not absolute units.
+   *
+   * Returns `null` for a reading the device answered with `:err` (e.g. while
+   * locked).
+   */
+  async readBiofeedback(): Promise<{ current: number | null; phaseAngle: number | null }> {
+    const parse = (reply: string): number | null => {
+      const m = /=(-?\d+(?:\.\d+)?)/.exec(reply);
+      return m ? Number(m[1]) : null;
+    };
+    const current = parse(await this.command(":r11="));
+    const phaseAngle = parse(await this.command(":r12="));
+    return { current, phaseAngle };
+  }
+
+  /** Read just the biofeedback current (raw detector counts), or `null`. */
+  async readCurrent(): Promise<number | null> {
+    return (await this.readBiofeedback()).current;
+  }
+
+  /** Read just the biofeedback phase angle (raw detector counts), or `null`. */
+  async readPhaseAngle(): Promise<number | null> {
+    return (await this.readBiofeedback()).phaseAngle;
+  }
+
+  /**
+   * Sweep a frequency range and record the biofeedback response at each step —
+   * the biofeedback scan.
+   *
+   * This is exactly what the Spooky2 application does, confirmed by capturing
+   * its serial traffic: for each frequency it writes `w24` and reads `r11`
+   * (current) and `r12` (phase). There is no dedicated scan command on the
+   * device — the scan is this host-side loop over the frequency register, so it
+   * is reproduced faithfully here rather than delegated to hardware.
+   *
+   * The output is driven during the scan (a scan with no output reads only
+   * noise). Returns one sample per step; the caller finds the resonance by
+   * looking for where `current` peaks or `phaseAngle` turns.
+   */
+  async biofeedbackScan(options: {
+    /** Range start in Hz. */
+    startHz: number;
+    /** Range end in Hz (may be below start — the sweep goes either direction). */
+    endHz: number;
+    /** Number of steps across the range. Mutually exclusive with `stepHz`. */
+    steps?: number;
+    /** Step size in Hz. Mutually exclusive with `steps`. */
+    stepHz?: number;
+    /** Channel to drive. Default 0. */
+    channel?: number;
+    /** Drive amplitude for the scan. Default: leave the current amplitude. */
+    amplitudeVpp?: number;
+    /** Settle time before reading, per step, in ms. Default 0. */
+    dwellMs?: number;
+    /** Turn the output off when the scan ends. Default true. */
+    stopOutputAtEnd?: boolean;
+    /** Cancel the scan. */
+    signal?: AbortSignal;
+    /** Called with each sample as it is taken. */
+    onSample?: (sample: BiofeedbackSample) => void;
+  }): Promise<BiofeedbackSample[]> {
+    const channel = options.channel ?? 0;
+    assertChannel(channel);
+    if (!Number.isFinite(options.startHz) || !Number.isFinite(options.endHz)) {
+      throw new AwgError("biofeedbackScan needs finite startHz and endHz");
+    }
+    const span = options.endHz - options.startHz;
+    const steps =
+      options.steps ??
+      (options.stepHz ? Math.max(1, Math.round(Math.abs(span) / options.stepHz)) : 100);
+    if (steps < 1) throw new AwgError("biofeedbackScan needs at least one step");
+
+    if (options.amplitudeVpp !== undefined) {
+      await this.setAmplitude(channel, options.amplitudeVpp);
+    }
+    await this.setOutput(channel, true);
+
+    const samples: BiofeedbackSample[] = [];
+    try {
+      for (let i = 0; i <= steps; i++) {
+        if (options.signal?.aborted) break;
+        const hz = options.startHz + (span * i) / steps;
+        await this.setFrequency(channel, hz);
+        if (options.dwellMs) await new Promise((r) => setTimeout(r, options.dwellMs));
+        const { current, phaseAngle } = await this.readBiofeedback();
+        const sample: BiofeedbackSample = { hz, current, phaseAngle };
+        samples.push(sample);
+        options.onSample?.(sample);
+      }
+    } finally {
+      if (options.stopOutputAtEnd ?? true) {
+        try {
+          await this.setOutput(channel, false);
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+    return samples;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Waveform upload, display, offline programs (decoded from a Spooky2 capture)
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Upload a waveform's sample table to a device slot.
+   *
+   * Decoded from a Spooky2 serial capture: the whole 1024-point table is sent in
+   * one `:a<slot>=<s0>,<s1>,…,` command, each sample a 10-bit value (0–1023,
+   * mid-scale 512). This is how the 23 Spooky2 waveforms get onto the device;
+   * `setWaveform(ch, slot)` then selects the slot for output.
+   *
+   * Pass either a normalised table (−1…+1, e.g. from `SPOOKY2_WAVEFORMS`), which
+   * is scaled to 0–1023, or raw 10-bit values with `{ raw: true }`. The device
+   * expects 1024 samples; other lengths are sent as-is (the caller should
+   * resample first).
+   *
+   * Not yet hardware-verified — reproduced from the captured command form.
+   */
+  async uploadWaveform(
+    slot: number,
+    samples: readonly number[],
+    options: { raw?: boolean } = {},
+  ): Promise<void> {
+    if (!Number.isInteger(slot) || slot < 0) {
+      throw new AwgError(`waveform slot must be a non-negative integer, got ${slot}`);
+    }
+    const encoded = options.raw
+      ? samples.map((v) => clampSample(Math.round(v)))
+      : samples.map((v) => clampSample(Math.round(((v + 1) / 2) * 1023)));
+    await this.command(`:a${slot}=${encoded.join(",")},`);
+  }
+
+  /**
+   * Set the text on the device display (`:n00=<text>`), e.g. a program name.
+   * Confirmed present in the capture ("Port 3 - General Biofeedback").
+   */
+  async setDisplayText(text: string): Promise<void> {
+    await this.command(`:n00=${text}`);
+  }
+
+  /**
+   * Store a program in an offline slot for standalone (host-disconnected) running.
+   *
+   * Decoded from a Spooky2 capture: a program slot is written as
+   * ```
+   * :n<slot>=<name>
+   * :p<slot>=<waveformSlot>,<amp×100>,<offset>,<dwell>,<count>,<f0×1e9>,…,<fN×1e9>,
+   * :g<slot>=<gate schedule>
+   * ```
+   * The frequency field is **integer nanohertz** (`round(Hz × 1e9)`), a different
+   * encoding from the live `w24` exponent form — confirmed by matching the values
+   * against the scan's own hit frequencies. The waveform itself is uploaded
+   * separately with {@link uploadWaveform} to `waveformSlot` and referenced here
+   * by number.
+   *
+   * Structure and frequency encoding are confirmed from the capture; the dwell
+   * unit and the offset span are taken to match the live device (seconds, and
+   * `120 ± 50`) but were not independently verified. Not yet hardware-tested.
+   */
+  async uploadProgram(
+    slot: number,
+    program: {
+      /** Slot of a waveform previously sent with {@link uploadWaveform}. */
+      waveformSlot: number;
+      /** Amplitude in volts (→ ×100). */
+      amplitudeVpp: number;
+      /** Offset as a fraction of amplitude, −1…+1 (→ `120 ± 50`). Default 0. */
+      offsetRatio?: number;
+      /** Hold time per frequency. Default 180. */
+      dwell?: number;
+      /** Program frequencies in Hz (each stored as `round(Hz × 1e9)`). */
+      frequenciesHz: readonly number[];
+      /** Optional program name (`:n<slot>=`). */
+      name?: string;
+      /** Optional gating schedule (`:g<slot>=`); default all-zero (no gating). */
+      gate?: readonly number[];
+    },
+  ): Promise<void> {
+    if (!Number.isInteger(slot) || slot < 0) {
+      throw new AwgError(`program slot must be a non-negative integer, got ${slot}`);
+    }
+    const s = String(slot).padStart(2, "0");
+    if (program.name !== undefined) await this.command(`:n${s}=${program.name}`);
+
+    const amp = Math.round(program.amplitudeVpp * GENX_AMPLITUDE_SCALE);
+    const offset =
+      GENX_OFFSET_CENTRE +
+      Math.round(Math.max(-1, Math.min(1, program.offsetRatio ?? 0)) * GENX_OFFSET_SPAN);
+    const dwell = program.dwell ?? 180;
+    const freqs = program.frequenciesHz.map(offlineFrequencyField);
+    const fields = [
+      program.waveformSlot,
+      amp,
+      offset,
+      dwell,
+      freqs.length,
+      ...freqs,
+    ].join(",");
+    await this.command(`:p${s}=${fields},`);
+
+    const gate = (program.gate ?? new Array(14).fill(0)).join(",");
+    await this.command(`:g${s}=${gate},`);
+
+    // Spooky2 finalises a memory write with :w96=12321,
+    await this.commitOfflineMemory();
+  }
+
+  /**
+   * Low-level offline-slot write, for fields {@link uploadProgram} doesn't model.
+   * `letter` is `n` (name), `p` (parameters) or `g` (gating).
+   */
+  async writeOfflineSlot(letter: "n" | "p" | "g", slot: number, value: string): Promise<void> {
+    const s = String(slot).padStart(2, "0");
+    await this.command(`:${letter}${s}=${value}`);
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -512,8 +781,12 @@ export class GenXPro implements SignalGenerator {
     return this.command(command);
   }
 
-  private async writeChannel(register: number, channel: number, value: number): Promise<void> {
-    await this.command(`:w${register}=${channelSlot(channel, value)}`);
+  /**
+   * Write a value to an output-specific register (field 1): `:w<reg>=<v>,`.
+   * Confirmed on hardware — these registers read field 1 regardless of output.
+   */
+  private async writeOut(register: number, value: number): Promise<void> {
+    await this.command(`:w${register}=${outField(value)}`);
   }
 
   /**
@@ -561,4 +834,25 @@ function assertFinite(name: string, value: number): void {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new AwgError(`${name} must be a finite number, got ${value}`);
   }
+}
+
+/** Clamp a waveform sample into the device's 10-bit range. */
+function clampSample(v: number): number {
+  return v < 0 ? 0 : v > 1023 ? 1023 : v;
+}
+
+/**
+ * Encode a frequency for an offline program: integer nanohertz (`Hz × 1e9`).
+ *
+ * Done via a fixed-decimal string rather than `hz * 1e9`, because that product
+ * exceeds `Number.MAX_SAFE_INTEGER` above ~9 MHz and would lose precision. Nine
+ * decimal places is exactly the device's nanohertz field: e.g. 1408287.93539227
+ * → `1408287935392270`, matching the captured values.
+ */
+function offlineFrequencyField(hz: number): string {
+  if (!Number.isFinite(hz) || hz < 0) {
+    throw new AwgError(`program frequency must be a non-negative number, got ${hz}`);
+  }
+  const digits = hz.toFixed(9).replace(".", "");
+  return digits.replace(/^0+(?=\d)/, "");
 }
