@@ -251,6 +251,42 @@ describe("GenXPro biofeedback", () => {
     });
     assert.ok(samples.length < 5, `expected an early stop, got ${samples.length} samples`);
   });
+
+  it("subtracts a baseline sweep from the loop average", async () => {
+    // Frequencies 1..4. The baseline reads the drifting impedance (1000 + 100·i);
+    // the loops read that plus a 200-count resonance bump at step 2.
+    let call = 0;
+    const transport = new RecordingTransport({
+      responder: (cmd) => {
+        if (cmd.startsWith(":r11=")) {
+          const i = call++;
+          const step = i % 4;
+          const isBaseline = i < 4;
+          const current = 1000 + step * 100 + (!isBaseline && step === 2 ? 200 : 0);
+          return `:r11=${current}.`;
+        }
+        if (cmd.startsWith(":r12=")) return ":r12=0.";
+        return ":ok";
+      },
+    });
+    const device = new GenXPro(transport, { replyTimeoutMs: 20, authProvider: null });
+    await device.open();
+    transport.clear();
+
+    const samples = await device.biofeedbackScan({
+      startHz: 1,
+      endHz: 4,
+      steps: 3,
+      loops: 2,
+      baseline: true,
+    });
+
+    // current = loop avg − baseline. Step 2 keeps the 200-count resonance bump.
+    assert.equal(samples[0]!.current, 0);
+    assert.equal(samples[1]!.current, 0);
+    assert.equal(samples[2]!.current, 200);
+    assert.equal(samples[3]!.current, 0);
+  });
 });
 
 describe("GenXPro frequency sweep", () => {
