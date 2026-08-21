@@ -112,7 +112,8 @@
     "./dist/transports/node.js": false
   },
   "dependencies": {
-    "@freqgen/core": "^0.1.0"
+    "@freqgen/core": "^0.1.0",
+    "@freqgen/spooky2": "^0.1.0"
   },
   "optionalDependencies": {
     "serialport": "^12.0.0 || ^13.0.0"

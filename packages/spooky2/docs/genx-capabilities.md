@@ -137,11 +137,13 @@ hardware-tested yet.
 A second capture (running a preset) shows Spooky2 sweeping frequencies with a
 plain host-side loop: sequential `:w24=<freq>,` writes, **no biofeedback reads**,
 linear in Hz within each segment (~0.18 Hz/step at 3.44 Hz, ~3.9 Hz/step at
-72 Hz), ~82–84 steps per range, six programs × three segments (low sweep /
-single / high sweep). The single frequencies decode as preset frequency ÷
-WCM(11): `396→36`, `417→37.909`, `528→48`, etc. Ranges are run-time sweeps, not
-offline slots. `frequencySweep()` reproduces this (linear steps, output off at
-the end by default).
+72 Hz), ~72–84 steps per range, six programs × three segments (low sweep /
+single / high sweep). **Both ranges and singles are played at `÷ wcm`** — the
+range `36-198=11` sweeps `36/11 → 198/11` = 3.27→18 Hz, and the single `396=11`
+is 36 Hz. Each single and each sweep lasts `wcm` seconds (11 s), so a program is
+33 s and the whole preset ≈ 3.3 min. `frequencySweep()` reproduces a single
+sweep; `presetToProgram()` + `runPresetRun()` reproduce the whole preset on any
+`SignalGenerator` (Gen X Pro, FeelTech, …).
 
 ### Spectrum — understood, math implemented
 

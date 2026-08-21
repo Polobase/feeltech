@@ -165,6 +165,33 @@ preserved raw (their decode is an open research item). Offline programs are
 stored with offset 120 (centre) — Spooky2 applies the preset's `Out1_Offset` at
 run time via registers 32/33.
 
+## Running a preset on any device
+
+A preset can also be *run* — not just uploaded — on any `SignalGenerator` (Gen X
+Pro, FeelTech FY, …), reproducing what a Spooky2 capture shows the generator
+actually plays:
+
+```ts
+import { parsePreset, presetToProgram, runPresetRun } from "@freqgen/spooky2";
+
+const run = presetToProgram(parsePreset(await readFile("preset.txt", "utf8")));
+await runPresetRun(device, run); // device: any SignalGenerator
+```
+
+`presetToProgram` turns the preset into a device-agnostic run plan: ranges become
+sweeps at `freq ÷ wcm` (`36-198=11` → 3.27→18 Hz), radionics singles decode to
+`freq ÷ wcm` (held `wcm` seconds), and `Out1/Out2_Offset` percentages become DC
+offsets in volts. `runPresetRun` configures the outputs once, loops the frequency
+per step, and switches off at the end — the same structure the capture shows.
+
+The CLI does the same thing:
+
+```bash
+spooky2 run-preset --device genx-pro --port /dev/cu.usbserial-1120 \
+    --preset "Manifestation.txt"
+feeltech run-preset --port /dev/cu.usbserial-1420 --preset "Manifestation.txt"
+```
+
 ## Frequency sweep
 
 The capture shows Spooky2 sweeping frequencies with a plain host-side loop of

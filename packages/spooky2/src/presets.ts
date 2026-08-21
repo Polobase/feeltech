@@ -32,6 +32,8 @@
  * …) kept verbatim in {@link Spooky2Preset.settings}.
  */
 
+import type { WaveformKind } from "@freqgen/core";
+
 export interface PresetFrequency {
   /** Single frequency in Hz, or the start of a range. */
   hz: number;
@@ -167,4 +169,145 @@ function spectrumWcmValues(preset: Spooky2Preset): Set<number> {
     }
   }
   return values;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Device-agnostic run model
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A frequency sweep across a range, in linear steps. */
+export interface SweepSegment {
+  type: "sweep";
+  startHz: number;
+  endHz: number;
+  /** Number of steps across the range. */
+  steps: number;
+  /** Hold time per step. Uniform — the whole sweep lasts `steps × dwell`. */
+  dwellPerStepSeconds: number;
+}
+
+/** A single frequency held for a dwell. */
+export interface StepSegment {
+  type: "step";
+  frequencyHz: number;
+  dwellSeconds: number;
+}
+
+export type PresetSegment = SweepSegment | StepSegment;
+
+/** One output channel to drive: amplitude, DC offset and waveform. */
+export interface PresetOutput {
+  /** Channel index (0 = Out 1, 1 = Out 2). */
+  channel: number;
+  /** Amplitude in volts peak-to-peak. */
+  amplitudeVpp: number;
+  /** DC offset in volts. */
+  offsetV: number;
+  waveform: WaveformKind;
+}
+
+/** A preset turned into a device-agnostic run plan. */
+export interface PresetRun {
+  /** `PresetName`. */
+  name: string;
+  /** Outputs to configure. */
+  outputs: PresetOutput[];
+  /** The frequency timeline, in order. */
+  segments: PresetSegment[];
+  /** Non-fatal problems (skipped DNA entries, clipping, …). */
+  warnings: string[];
+}
+
+export interface PresetRunOptions {
+  /** Linear steps per range sweep. Default 84 (the capture shows ~72–84 points
+   * per range, varying with DDS quantization; this is a close, tunable default).
+   * The dwell is scaled so the whole sweep still lasts `wcm` seconds. */
+  sweepSteps?: number;
+  /** Force a waveform instead of reading the preset's `Out1_*` flags. */
+  waveform?: WaveformKind;
+  /** Channels to drive. Default: 0 and 1. */
+  channels?: number[];
+}
+
+const DEFAULT_SWEEP_STEPS = 84;
+
+/**
+ * Turn a parsed preset into a device-agnostic run plan.
+ *
+ * This is the *run-time* model, distinct from the offline upload path: ranges
+ * become sweeps and radionics singles are decoded, matching what a Spooky2
+ * capture shows the generator actually plays.
+ *
+ * - Range `start-end=wcm` → a linear sweep from `start/wcm` to `end/wcm`
+ *   (`36-198=11` sweeps 3.27 → 18 Hz), lasting `wcm` seconds total
+ *   (uniform `wcm/steps` dwell per step).
+ * - Radionics single `freq=wcm` → `freq/wcm` Hz held for `wcm` seconds
+ *   (`396=11` → 36 Hz for 11 s).
+ * - Standard single `freq=dwell` → `freq` Hz held for `dwell` seconds.
+ * - DNA `~…` entries are skipped (decode not implemented) and reported.
+ *
+ * Amplitude comes from `Out1_Amplitude`/`Out2_Amplitude`; the DC offset is the
+ * preset's percentage converted to volts (`offset% / 100 × Vpp / 2`).
+ */
+export function presetToProgram(
+  preset: Spooky2Preset,
+  options: PresetRunOptions = {},
+): PresetRun {
+  const wcms = spectrumWcmValues(preset);
+  const sweepSteps = options.sweepSteps ?? DEFAULT_SWEEP_STEPS;
+  const waveform = options.waveform ?? waveformFromSettings(preset.settings);
+  const warnings: string[] = [];
+
+  const channels = options.channels ?? [0, 1];
+  const outputs: PresetOutput[] = channels.map((channel) => {
+    const ampKey = channel === 0 ? "Out1_Amplitude" : "Out2_Amplitude";
+    const offKey = channel === 0 ? "Out1_Offset" : "Out2_Offset";
+    const amplitudeVpp = Number(preset.settings[ampKey] ?? 20);
+    const offsetPct = Number(preset.settings[offKey] ?? 0);
+    const offsetV = (offsetPct / 100) * (amplitudeVpp / 2);
+    if (Math.abs(offsetV) >= amplitudeVpp / 2) {
+      warnings.push(
+        `channel ${channel} offset ${offsetV.toFixed(2)} V consumes the full ` +
+          `${amplitudeVpp} Vpp swing and will clip`,
+      );
+    }
+    return { channel, amplitudeVpp, offsetV, waveform };
+  });
+
+  const segments: PresetSegment[] = [];
+  for (const program of preset.programs) {
+    for (const f of program.frequencies) {
+      if (f.dna !== null) {
+        warnings.push(`skipped DNA frequency ~${f.dna} (decode not implemented)`);
+        continue;
+      }
+      if (f.endHz !== null) {
+        const wcm = f.dwellOrWcm;
+        segments.push({
+          type: "sweep",
+          startHz: f.hz / wcm,
+          endHz: f.endHz / wcm,
+          steps: sweepSteps,
+          dwellPerStepSeconds: wcm / sweepSteps,
+        });
+        continue;
+      }
+      const isRadionics = wcms.has(f.dwellOrWcm);
+      segments.push({
+        type: "step",
+        frequencyHz: isRadionics ? f.hz / f.dwellOrWcm : f.hz,
+        dwellSeconds: f.dwellOrWcm,
+      });
+    }
+  }
+
+  return { name: preset.name, outputs, segments, warnings };
+}
+
+/** Read the waveform the preset requests from its `Out1_*` flags. */
+function waveformFromSettings(settings: Record<string, string>): WaveformKind {
+  if (settings["Out1_Sine"] === "True") return "sine";
+  if (settings["Out1_Square"] === "True") return "square";
+  if (settings["Out1_Triangle"] === "True") return "triangle";
+  return "sine";
 }

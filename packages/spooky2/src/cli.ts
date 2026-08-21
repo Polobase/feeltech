@@ -12,13 +12,15 @@
  */
 
 import { parseArgs, type ParseArgsConfig } from "node:util";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { AwgError, DeviceRegistry, type ChannelStep } from "@freqgen/core";
 import { NodeSerialTransport, listPorts, describeBridge } from "@freqgen/core/node";
 
 import { SPOOKY2_DEVICES } from "./devices.js";
+import { parsePreset, presetToProgram } from "./presets.js";
+import { runPresetRun } from "./run-preset.js";
 
 const registry = new DeviceRegistry().registerAll(SPOOKY2_DEVICES);
 
@@ -44,6 +46,11 @@ const COMMAND_OPTIONS: Record<string, NonNullable<ParseArgsConfig["options"]>> =
     on: { type: "boolean" },
     off: { type: "boolean" },
   },
+  "run-preset": {
+    preset: { type: "string" },
+    channels: { type: "string" },
+    "sweep-steps": { type: "string" },
+  },
 };
 
 const USAGE = `Usage: spooky2 <command> [options]
@@ -55,6 +62,9 @@ Commands:
                              --device xm|genx|genx-pro  --channel 1|2
                              --waveform sine|square|... --freq <Hz> --amp <Vpp>
                              --offset <V> --duty <pct> --phase <deg>  --on | --off
+  run-preset                 Run a Spooky2 preset file on a generator
+                             --device xm|genx|genx-pro  --preset <file.txt>
+                             --channels 1|2|1,2  --sweep-steps <n>
 
 Global options:
   -d, --device <id>          Driver to use (see \`spooky2 devices\`)
@@ -181,6 +191,72 @@ async function cmdSet(values: ParsedCli["values"]): Promise<void> {
   }
 }
 
+async function cmdRunPreset(values: ParsedCli["values"]): Promise<void> {
+  const deviceId = values["device"] ? String(values["device"]) : undefined;
+  if (!deviceId) {
+    throw new AwgError("--device is required — run `spooky2 devices` to see the options");
+  }
+  const path = values["port"] ? String(values["port"]) : undefined;
+  if (!path) {
+    throw new AwgError("--port is required — run `spooky2 list` to find it");
+  }
+  const presetPath = values["preset"] ? String(values["preset"]) : undefined;
+  if (!presetPath) throw new AwgError("--preset is required (path to a Spooky2 .txt preset)");
+
+  const text = readFileSync(presetPath, "utf8");
+  const channels = parseChannels(values["channels"]);
+  const sweepSteps = values["sweep-steps"] !== undefined
+    ? parseNumber("sweep-steps", values["sweep-steps"])
+    : undefined;
+  const run = presetToProgram(parsePreset(text), {
+    channels,
+    ...(sweepSteps !== undefined ? { sweepSteps } : {}),
+  });
+
+  for (const warning of run.warnings) console.error(`⚠️  ${warning}`);
+
+  const descriptor = registry.get(deviceId);
+  if (descriptor && descriptor.verified !== true) {
+    console.error(
+      `⚠️  ${descriptor.label} is not hardware-verified — confirm output with a scope.`,
+    );
+  }
+
+  const device = registry.create(deviceId, new NodeSerialTransport(path), {
+    debug: values["debug"] === true,
+  });
+  await device.open();
+  try {
+    console.log(
+      `Running "${run.name}" (${run.segments.length} segments) on ` +
+        `${descriptor?.label ?? deviceId}…`,
+    );
+    await runPresetRun(device, run, {
+      onSegment: (i, seg) =>
+        console.log(
+          `  ${i + 1}/${run.segments.length}: ${
+            seg.type === "step"
+              ? `${seg.frequencyHz.toFixed(3)} Hz for ${seg.dwellSeconds}s`
+              : `sweep ${seg.startHz.toFixed(3)}→${seg.endHz.toFixed(3)} Hz`
+          }`,
+        ),
+    });
+    console.log("Done.");
+  } finally {
+    await device.close();
+  }
+}
+
+function parseChannels(value: unknown): number[] | undefined {
+  if (value === undefined) return undefined;
+  const raw = String(value).split(",").map((s) => s.trim());
+  return raw.map((s) => {
+    const n = Number(s);
+    if (n !== 1 && n !== 2) throw new AwgError(`--channels must be 1, 2, or 1,2 — got ${value}`);
+    return n - 1;
+  });
+}
+
 export async function run(argv: string[]): Promise<void> {
   const { command, values } = parseCliArgs(argv);
   if (command === "help" || values["help"]) {
@@ -195,6 +271,8 @@ export async function run(argv: string[]): Promise<void> {
       return cmdList(json);
     case "set":
       return cmdSet(values);
+    case "run-preset":
+      return cmdRunPreset(values);
     default:
       throw new AwgError(`Unknown command "${command}"`);
   }

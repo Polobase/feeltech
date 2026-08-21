@@ -35,6 +35,7 @@ import {
   type FeelTechOptions,
 } from "./index.js";
 import { listPorts, FEELTECH_USB_VENDOR_IDS } from "./transports/node.js";
+import { parsePreset, presetToProgram, runPresetRun } from "@freqgen/spooky2";
 
 type OptionConfig = NonNullable<ParseArgsConfig["options"]>;
 
@@ -81,6 +82,11 @@ const COMMAND_OPTIONS: Record<string, OptionConfig> = {
   waveforms: {
     channel: { type: "string", default: "1" },
   },
+  "run-preset": {
+    preset: { type: "string" },
+    channels: { type: "string" },
+    "sweep-steps": { type: "string" },
+  },
 };
 
 const USAGE = `Usage: feeltech <command> [options]
@@ -99,6 +105,8 @@ Commands:
   waveforms                  List waveform names [--channel 1|2] [--family FY6900]
   upload                     Upload an arbitrary waveform
                              --slot <n> --file <path> [--resample] [--normalize]
+  run-preset                 Run a Spooky2 preset file (ranges become sweeps)
+                             --preset <file.txt> [--channels 1|2|1,2] [--sweep-steps <n>]
 
 Global options:
   -p, --port <path>          Serial port (auto-detected when omitted)
@@ -362,6 +370,47 @@ async function cmdUpload(values: ParsedCli["values"]): Promise<void> {
   });
 }
 
+function parseRunChannels(value: unknown): number[] | undefined {
+  if (value === undefined) return undefined;
+  return String(value)
+    .split(",")
+    .map((s) => {
+      const n = Number(s.trim());
+      if (n !== 1 && n !== 2) {
+        throw new FeelTechError(`--channels must be 1, 2, or 1,2 — got ${value}`);
+      }
+      return n - 1;
+    });
+}
+
+async function cmdRunPreset(values: ParsedCli["values"]): Promise<void> {
+  const file = values["preset"];
+  if (typeof file !== "string") throw new FeelTechError("--preset is required (path to a .txt)");
+  const text = readFileSync(file, "utf8");
+  const sweepSteps =
+    values["sweep-steps"] !== undefined ? parseNumber("sweep-steps", values["sweep-steps"]) : undefined;
+  const run = presetToProgram(parsePreset(text), {
+    channels: parseRunChannels(values["channels"]),
+    ...(sweepSteps !== undefined ? { sweepSteps } : {}),
+  });
+  for (const warning of run.warnings) console.error(`⚠️  ${warning}`);
+
+  await withDevice(values, async (fy) => {
+    console.log(`Running "${run.name}" (${run.segments.length} segments)…`);
+    await runPresetRun(fy, run, {
+      onSegment: (i, seg) =>
+        console.log(
+          `  ${i + 1}/${run.segments.length}: ${
+            seg.type === "step"
+              ? `${seg.frequencyHz.toFixed(3)} Hz for ${seg.dwellSeconds}s`
+              : `sweep ${seg.startHz.toFixed(3)}→${seg.endHz.toFixed(3)} Hz`
+          }`,
+        ),
+    });
+    console.log("Done.");
+  });
+}
+
 const COMMANDS: Record<string, (values: ParsedCli["values"]) => Promise<void>> = {
   list: cmdList,
   info: cmdInfo,
@@ -370,6 +419,7 @@ const COMMANDS: Record<string, (values: ParsedCli["values"]) => Promise<void>> =
   measure: cmdMeasure,
   waveforms: cmdWaveforms,
   upload: cmdUpload,
+  "run-preset": cmdRunPreset,
 };
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
