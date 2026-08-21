@@ -84,8 +84,7 @@ Addressing one output leaves the other field empty (`:w11=1,,` / `:w11=,1,`).
 | `12` | **Gating, both outputs** (two fields) | vendor label says "Out 1 Gating", but a capture shows `:w12=<a>,<b>,` driving *both* outputs; register 70 is never sent |
 | `13` | **Out 2 modulation** | " Out 2 Modulation On/Off" |
 | `14` | **Out 2 sync** | " Out 2 Sync On/Off" |
-| `15` | **Out 1 low-frequency mode** | " Out 1 Low Frequency mode On/Off" |
-| `51` | **Out 2 low-frequency mode** | " Out 2 Low Frequency mode On/Off" |
+| `15` | **Low-frequency mode, both outputs** (two fields) | vendor label says " Out 1 Low Frequency mode On/Off"; a capture shows `:w15=<a>,<b>,` carrying *both* outputs — register 51 is never sent |
 | `17` | **Waveform inversion** | " Out 1/2 Waveform Inversion On/Off" |
 | `20` | Out 1 waveform # | " Out 1 Waveform # " |
 | `21` | Out 2 waveform # | " Out 2 Waveform # " |
@@ -151,15 +150,27 @@ then select a slot for live output (11 = sine, 12 = square, 13 = rising ramp).
 
 The biofeedback scan is a host-side loop — `:w24=<freq>` then `:r11=` (current)
 and `:r12=` (phase), swept across a range; Spooky2's displayed value ≈ `r11/100`,
-and it flags a "hit" where that deviates from a running average.
+and it flags a "hit" where that deviates from a running average. A second capture
+(2026-08-15, "save to device" + running a preset) shows a **plain frequency
+sweep** with no biofeedback reads: sequential `:w24=<freq>,` writes, linear in Hz
+within each segment (~0.18 Hz/step at 3.44 Hz, ~3.9 Hz/step at 72 Hz), ~82–84
+steps per range, six programs × three segments (low sweep / single / high sweep).
+The single frequencies decode as preset frequency ÷ WCM(11): `396→36`,
+`417→37.909`, `528→48`, etc. Ranges are run-time sweeps, not offline slots.
 
-The `:p` **frequency field** is **integer nanohertz** (`round(Hz × 1e9)`) — a
-different encoding from the live `w24` exponent form, proven by matching the
-stored values against the scan's own hit frequencies (`1408287935392270` ÷ 1e9 =
-1408287.93539227 Hz). Full `:p` layout:
-`:p<slot>=<waveformSlot>,<amp×100>,<offset=120>,<dwell>,<count>,<f0×1e9>,…,`.
-`uploadProgram()`, `uploadWaveform()` (`:a`) and `setDisplayText()` (`:n00`) are
-all implemented; `writeOfflineSlot()` remains for raw field access.
+The `:p` **frequency field uses the same exponent encoding as live `w24`** —
+`round(Hz × 1000) + 6` for Hz values, e.g. `:p01=41,2000,120,600,1,7836,` =
+7.83 Hz and `:p04=44,2000,120,2700,1,183586,` = 183.58 Hz. (An earlier claim
+that it was integer nanohertz was a fluke: values ending in `0` decode
+identically both ways.) Full `:p` layout:
+`:p<slot>=<waveformSlot>,<amp×100>,<offset=120>,<dwell>,<count>,<f0>,…,`.
+The **gate field is `2 × count` zeros** (`:g01=0,0,` for one frequency,
+`:g07=0,0,0,0,0,0,0,0,0,0,0,0,` for six). Offline programs are stored with
+**offset 120 (centre) regardless of the preset's `Out1_Offset`** — offsets are
+applied at run time via registers 32/33, whose span is **±100** (`:w32=20,` ⇔
+−100, `:w33=220,` ⇔ +100). `uploadProgram()`, `uploadWaveform()` (`:a`),
+`setDisplayText()` (`:n00`), `loadPreset()` and `frequencySweep()` are all
+implemented; `writeOfflineSlot()` remains for raw field access.
 
 ### Authentication
 
@@ -227,10 +238,10 @@ an unattached literal `101` beside the waveform labels.
 
 Named in the binary's own function labels:
 
-- **Gating** — `SetGate(Port, 1/2)`, GX registers 12 and 70, plus offline gate
-  parameter lists.
+- **Gating** — `SetGate(Port, 1/2)`, GX registers 12 and 70. The offline gate
+  schedule (`:g<slot>=`) is implemented as `2 × count` zeros; live gating
+  (register 12) is not.
 - **Out 2 modulation** (register 13) and **Out 2 sync** (register 14).
-- **Low-frequency mode** per output (registers 15 and 51).
 - **Waveform inversion** (register 17).
 - **Calibration** (registers 50 and 71).
 - **Frequency multiplier / offset for Out 2** — `Freq2Multiplier(Port)`,
@@ -238,9 +249,9 @@ Named in the binary's own function labels:
 - **Program chains and dwell** — `SetChain`, `SetStep`, `SetDwell`,
   `OnDuration`, `RunDuration`, `SequenceRepeatCount`, `ChainRunDuration`,
   `ChainRepeatCount`.
-- **Offline program upload** to generator memory (30 slots on the XM).
 - **Wobble** — frequency and amplitude, per `Settings_Frequency_Wobble_*`.
-- **Biofeedback scan** — `:r11` / `:r12` read current and angle.
+- **Biofeedback scan** — `:r11` / `:r12` read current and angle; the plain
+  frequency sweep (no reads) is implemented as `frequencySweep()`.
 - **MicroGen** as a device.
 
 Per-output parameters, from the app's own `Status.csv` header:

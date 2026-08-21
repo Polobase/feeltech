@@ -74,7 +74,8 @@ describe("GenXPro register map (hardware-confirmed)", () => {
     await device.setOffsetRatio(0, 0);
     await device.setOffsetRatio(0, 1);
     await device.setOffsetRatio(1, -1);
-    assert.deepEqual(stripCRLF(transport.writes), [":w32=120,", ":w32=170,", ":w33=70,"]);
+    // Span ±100 confirmed from the capture: offset −100 → :w32=20, +100 → :w33=220.
+    assert.deepEqual(stripCRLF(transport.writes), [":w32=120,", ":w32=220,", ":w33=20,"]);
   });
 
   it("addresses both outputs together on the shared output register (two fields)", async () => {
@@ -112,14 +113,14 @@ describe("GenXPro per-output extras", () => {
     await device.setModulation(true);       // Out2 modulation → w13, field 1
     await device.setSync(true);             // Out2 sync → w14, field 1
     await device.setInversion(0, true);     // inversion → w17, TWO fields (shared)
-    await device.setLowFrequencyMode(1, true); // Out2 LF mode → w51, field 1
+    await device.setLowFrequencyMode(1, true); // Out2 LF mode → w15 field 2 (per capture)
     assert.deepEqual(stripCRLF(transport.writes), [
       ":w12=1,,",
       ":w12=,1,",
       ":w13=1,",
       ":w14=1,",
       ":w17=1,,",
-      ":w51=1,",
+      ":w15=,1,",
     ]);
   });
 
@@ -155,6 +156,26 @@ describe("GenXPro applyStep", () => {
       ":w28=500,",
       ":w11=1,0,",
     ]);
+  });
+});
+
+describe("GenXPro device info", () => {
+  it("reads the firmware version off :r02, matching the capture", async () => {
+    const transport = new RecordingTransport({
+      responder: (cmd) => (cmd.startsWith(":r02=") ? ":r02=200." : ":ok"),
+    });
+    const device = new GenXPro(transport, { replyTimeoutMs: 20, authProvider: null });
+    await device.open();
+    assert.equal(await device.readFirmwareVersion(), 200);
+  });
+
+  it("returns null when the device does not answer with a number", async () => {
+    const transport = new RecordingTransport({
+      responder: () => ":err",
+    });
+    const device = new GenXPro(transport, { replyTimeoutMs: 20, authProvider: null });
+    await device.open();
+    assert.equal(await device.readFirmwareVersion(), null);
   });
 });
 
@@ -231,6 +252,56 @@ describe("GenXPro biofeedback", () => {
   });
 });
 
+describe("GenXPro frequency sweep", () => {
+  it("steps the frequency register linearly, like the captured Spooky2 sweep", async () => {
+    const transport = new RecordingTransport({ defaultResponse: ":ok" });
+    const device = new GenXPro(transport, { replyTimeoutMs: 20, authProvider: null });
+    await device.open();
+    transport.clear();
+
+    const swept = await device.frequencySweep({
+      startHz: 3.44,
+      endHz: 17.93,
+      steps: 76,
+      amplitudeVpp: 10,
+      offsetRatio: -1,
+    });
+
+    assert.equal(swept.length, 77); // 0..steps inclusive
+    assert.equal(swept[0], 3.44);
+    assert.equal(swept.at(-1), 17.93);
+
+    const writes = transport.writes.map((w) => w.trimEnd());
+    // setup: amplitude, offset, output on
+    assert.ok(writes.includes(":w28=1000,"));
+    assert.ok(writes.includes(":w32=20,")); // offset −1 → 120 − 100
+    assert.ok(writes.includes(":w11=1,0,"));
+    // each step wrote an exponent-encoded frequency to w24
+    const freqWrites = writes.filter((w) => w.startsWith(":w24="));
+    assert.equal(freqWrites.length, 77);
+    // 3.44 Hz → mantissa 344, code 6 (Spooky2 writes the same value with full
+    // 8-place precision, 3440082640; both decode to 3.44 Hz on the device)
+    assert.equal(freqWrites[0], ":w24=3446,");
+    // output turned off at the end
+    assert.equal(writes.at(-1), ":w11=0,0,");
+  });
+
+  it("stops a sweep early when aborted", async () => {
+    const transport = new RecordingTransport({ defaultResponse: ":ok" });
+    const device = new GenXPro(transport, { replyTimeoutMs: 20, authProvider: null });
+    await device.open();
+    const controller = new AbortController();
+    const swept = await device.frequencySweep({
+      startHz: 1000,
+      endHz: 100000,
+      steps: 1000,
+      signal: controller.signal,
+      onStep: () => controller.abort(),
+    });
+    assert.ok(swept.length < 5, `expected an early stop, got ${swept.length} steps`);
+  });
+});
+
 describe("GenXPro waveform upload & offline commands (decoded from capture)", () => {
   it("uploads a normalised table as one :a<slot>= command, scaled to 10-bit", async () => {
     const { transport, device } = await pro();
@@ -262,35 +333,66 @@ describe("GenXPro waveform upload & offline commands (decoded from capture)", ()
     );
   });
 
-  it("builds an offline program with nanohertz frequencies, matching the capture", async () => {
+  it("builds an offline program with exponent-encoded frequencies, matching the capture", async () => {
     const { transport, device } = await pro();
-    await device.uploadProgram(6, {
-      waveformSlot: 46,
+    await device.uploadProgram(1, {
+      waveformSlot: 41,
       amplitudeVpp: 20, // → 2000
-      dwell: 180,
-      name: "(-)-beta-Elemene",
-      // exact scan-hit frequencies from the capture
-      frequenciesHz: [1408287.93539227, 1266982.32750715],
+      dwell: 600,
+      name: "Schumann Resonance (CAFL)",
+      // 7.83 Hz Schumann — captured as :p01=41,2000,120,600,1,7836,
+      frequenciesHz: [7.83],
     });
     const writes = transport.writes.map((w) => w.trimEnd());
-    assert.equal(writes[0], ":n06=(-)-beta-Elemene");
-    // :p06 = wfSlot, amp×100, offset(120), dwell, count, f0×1e9, f1×1e9,
-    assert.equal(
-      writes[1],
-      ":p06=46,2000,120,180,2,1408287935392270,1266982327507150,",
-    );
-    assert.ok(writes[2]!.startsWith(":g06=0,0,")); // default no gating
+    assert.equal(writes[0], ":n01=Schumann Resonance (CAFL)");
+    // :p01 = wfSlot, amp×100, offset(120), dwell, count, f0 (exponent-encoded)
+    assert.equal(writes[1], ":p01=41,2000,120,600,1,7836,");
+    // one frequency → two gate values
+    assert.equal(writes[2], ":g01=0,0,");
   });
 
-  it("keeps nanohertz precision without overflow at high frequencies", async () => {
+  it("encodes a fractional program frequency with the exponent digit, matching the capture", async () => {
+    const { transport, device } = await pro();
+    await device.uploadProgram(4, {
+      waveformSlot: 44,
+      amplitudeVpp: 20,
+      dwell: 2700,
+      name: "Plant Growth (CUST)",
+      // 183.58 Hz — captured as :p04=44,2000,120,2700,1,183586,
+      frequenciesHz: [183.58],
+    });
+    const writes = transport.writes.map((w) => w.trimEnd());
+    assert.equal(writes[1], ":p04=44,2000,120,2700,1,183586,");
+    assert.equal(writes[2], ":g04=0,0,");
+  });
+
+  it("writes two gate values per frequency, matching the 6-frequency capture", async () => {
+    const { transport, device } = await pro();
+    await device.uploadProgram(7, {
+      waveformSlot: 47,
+      amplitudeVpp: 20,
+      dwell: 180,
+      // captured :p07=47,2000,120,180,6,5481257,548758,8564455,135866253,8574218752,136021253,
+      frequenciesHz: [54812.5, 54875, 856.445, 135.86625, 857.421875, 136.02125],
+    });
+    const writes = transport.writes.map((w) => w.trimEnd());
+    assert.equal(
+      writes[0],
+      ":p07=47,2000,120,180,6,5481257,548758,8564455,135866253,8574218752,136021253,",
+    );
+    // six frequencies → twelve gate values
+    assert.equal(writes[1], ":g07=0,0,0,0,0,0,0,0,0,0,0,0,");
+  });
+
+  it("keeps exponent precision without overflow at high frequencies", async () => {
     const { transport, device } = await pro();
     await device.uploadProgram(0, {
       waveformSlot: 11,
       amplitudeVpp: 5,
-      frequenciesHz: [40_000_000], // 40 MHz × 1e9 = 4e16, beyond Number safe range
+      frequenciesHz: [40_000_000], // 40 MHz → mantissa 40000000, code 8
     });
     // exact, no floating-point corruption
-    assert.ok(transport.writes.some((w) => w.includes("40000000000000000,")));
+    assert.ok(transport.writes.some((w) => w.includes("400000008,")));
   });
 
   it("rejects a bad waveform slot", async () => {

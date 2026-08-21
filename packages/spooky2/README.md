@@ -112,9 +112,10 @@ and two user-defined slots), taken verbatim from the vendor's `Waveforms.csv` at
 1024 samples each, normalised to −1…+1.
 
 Live waveform selection (`setWaveform`) covers the built-in sine and square; the
-other Spooky2 shapes are uploaded sample tables, and the upload path is not yet
-implemented. See [`docs/genx-capabilities.md`](docs/genx-capabilities.md) for the
-full capability/gap analysis.
+other Spooky2 shapes are uploaded sample tables via `uploadWaveform(slot,
+samples)` (the `:a<slot>=` command, decoded from a real capture). See
+[`docs/genx-capabilities.md`](docs/genx-capabilities.md) for the full
+capability/gap analysis.
 
 ## Biofeedback
 
@@ -141,6 +142,40 @@ await runProgram(xm, [
   { frequencyHz: 787,   dwellSeconds: 180 },
   { frequencyHz: 880,   dwellSeconds: 180 },
 ], { repeat: 3, signal: abortController.signal });
+```
+
+## Preset loading
+
+A Spooky2 preset `.txt` can be parsed and its single-frequency programs uploaded
+to the Gen X Pro's offline slots, matching what a real capture shows:
+
+```ts
+import { parsePreset, GenXPro } from "@freqgen/spooky2";
+
+const preset = parsePreset(await readFile("preset.txt", "utf8"));
+const count = await pro.loadPreset(preset); // uploads waveform + n/p/g per program
+```
+
+`loadPreset` uploads each program 1:1 (waveform to slot 41+index, name/gate/
+parameters to slot 1+index), using the preset's `Out1_Amplitude` for the
+amplitude field. Range entries (`36-198=11`) are run-time sweeps, not offline
+slots, so they're excluded. Radionics/spectrum singles (`396=11`) are decoded as
+`freq ÷ wcm` → 36 Hz (confirmed against a capture). DNA `~…` strings are
+preserved raw (their decode is an open research item). Offline programs are
+stored with offset 120 (centre) — Spooky2 applies the preset's `Out1_Offset` at
+run time via registers 32/33.
+
+## Frequency sweep
+
+The capture shows Spooky2 sweeping frequencies with a plain host-side loop of
+`:w24=` writes (linear in Hz, ~82–84 steps per range). `frequencySweep()`
+reproduces it:
+
+```ts
+const swept = await pro.frequencySweep({
+  startHz: 36, endHz: 198, steps: 84,
+  amplitudeVpp: 20, dwellMs: 100, stopOutputAtEnd: true,
+});
 ```
 
 ## Unsupported parameters

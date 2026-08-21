@@ -59,6 +59,8 @@ import {
   outField,
   amplitudeRegisterValue,
 } from "./genx-wire.js";
+import { presetProgramsForUpload, type Spooky2Preset } from "./presets.js";
+import { SPOOKY2_WAVEFORMS, type Spooky2WaveformName } from "./waveforms.js";
 
 /**
  * Register map, from Spooky2's own debug labels.
@@ -80,10 +82,12 @@ export const GENX_PRO_REGISTERS = {
   modulationOut2: 13,
   /** Out 2 sync on/off. */
   syncOut2: 14,
-  /** Out 1 low-frequency mode on/off. */
-  lowFreqOut1: 15,
-  /** Out 2 low-frequency mode on/off. */
-  lowFreqOut2: 51,
+  /**
+   * Low-frequency mode — **both** outputs, two fields (Out1, Out2), like
+   * {@link output}. A Spooky2 capture drives it as `:w15=1,1,` and never sends
+   * register 51, so low-frequency mode is this single two-field register.
+   */
+  lowFreq: 15,
   /** Waveform inversion (field 1 = Out1, field 2 = Out2). */
   inversion: 17,
   /** Out 1 waveform number. */
@@ -119,9 +123,16 @@ export const GENX_PRO_REGISTERS = {
 /** Amplitude counts per volt. Mirrored from the XM (centivolts); not confirmed. */
 export const GENX_AMPLITUDE_SCALE = 100;
 
-/** Offset centre value and counts per full-scale, from the vendor init (`:w32=120`). */
+/**
+ * Offset centre value and counts per full-scale.
+ *
+ * Centre `120` is from the vendor init (`:w32=120`). The span is confirmed from
+ * a Spooky2 capture: a preset with `Out1_Offset=-100` / `Out2_Offset=100` was
+ * driven as `:w32=20,` / `:w33=220,`, so the register is `120 + offset` with
+ * offset in −100…+100.
+ */
 export const GENX_OFFSET_CENTRE = 120;
-export const GENX_OFFSET_SPAN = 50;
+export const GENX_OFFSET_SPAN = 100;
 
 /** Slots 11 (sine) and 12 (square) — the only two the third-party notes name;
  * the vendor waveform table (`Waveforms.csv`) suggests more but their register
@@ -305,9 +316,9 @@ export class GenXPro implements SignalGenerator {
    *
    * Close to the writes `Spooky.exe` issues on connect — clear Out 2 sync,
    * clear inversion, zero both frequencies, centre both offsets — with one
-   * deliberate change: the low-frequency-mode registers are set to **0**, not 1.
+   * deliberate change: the low-frequency-mode register is set to **0**, not 1.
    *
-   * At `w15/w51 = 0` the exponent frequency encoding (see
+   * At `w15 = 0` the exponent frequency encoding (see
    * {@link encodeGenXFrequency}) decodes directly on the device — a register
    * value of `10008` reads back as 1000 Hz. At `= 1` the same value reads ten
    * times lower. Since the exponent code already spans the whole frequency
@@ -319,8 +330,7 @@ export class GenXPro implements SignalGenerator {
       ":w17=0,0,",
       ":w24=0,",
       ":w25=0,",
-      ":w15=0,",
-      ":w51=0,",
+      ":w15=0,0,",
       ":w32=120,",
       ":w33=120,",
     ]) {
@@ -391,7 +401,8 @@ export class GenXPro implements SignalGenerator {
    * Set the DC offset as a fraction of amplitude, −1…+1.
    *
    * `120` is centre; `+1` and `−1` map `GENX_OFFSET_SPAN` counts either side.
-   * The centre is confirmed from the vendor init; the span is an estimate.
+   * Both the centre and the span are confirmed from a Spooky2 capture
+   * (`:w32=20,` for offset −100, `:w33=220,` for offset +100).
    */
   async setOffsetRatio(channel: number, ratio: number): Promise<void> {
     assertChannel(channel);
@@ -502,14 +513,17 @@ export class GenXPro implements SignalGenerator {
   /**
    * Force low-frequency mode on an output.
    *
+   * Register 15 carries both outputs in two fields (`:w15=1,1,` in the capture),
+   * so this is a two-field write like {@link setGating}, leaving the other
+   * output's mode untouched.
+   *
    * The driver keeps this at 0 (see {@link postAuthInit}), where the exponent
    * frequency encoding decodes directly. Setting it to 1 shifts decoded
    * frequencies down by a decade, so only use it if you also compensate.
    */
   async setLowFrequencyMode(channel: number, on: boolean): Promise<void> {
     assertChannel(channel);
-    const reg = channel === 0 ? GENX_PRO_REGISTERS.lowFreqOut1 : GENX_PRO_REGISTERS.lowFreqOut2;
-    await this.writeOut(reg, on ? 1 : 0);
+    await this.command(`:w${GENX_PRO_REGISTERS.lowFreq}=${channelSlot(channel, on ? 1 : 0)}`);
   }
 
   /** Run the calibration routine. `load: "50ohm"` uses register 71, else 50. */
@@ -538,6 +552,23 @@ export class GenXPro implements SignalGenerator {
   async allOutputsOff(): Promise<void> {
     this.outputOn = [false, false];
     await this.command(`:w${GENX_PRO_REGISTERS.output}=0,0,`);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Device info
+  // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Read the firmware version (`:r02=`).
+   *
+   * The device answers with the version as a plain integer, e.g. `:r02=200.`
+   * for firmware 200 (the unit this driver was verified against). Returns
+   * `null` if the device does not answer with a number.
+   */
+  async readFirmwareVersion(): Promise<number | null> {
+    const reply = await this.command(":r02=");
+    const m = /=(\d+)/.exec(reply);
+    return m ? Number(m[1]) : null;
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -655,6 +686,85 @@ export class GenXPro implements SignalGenerator {
     return samples;
   }
 
+  /**
+   * Sweep a frequency range by stepping the frequency register — the plain
+   * frequency sweep, with no biofeedback reads.
+   *
+   * A Spooky2 capture of a running program shows this is how sweeps reach the
+   * device: the host writes `w24` once per step, linearly across the range
+   * (~83 steps per range in the capture), holding each frequency for the dwell
+   * time. There is no sweep command on the device — it is this host-side loop
+   * over the frequency register, exactly like {@link biofeedbackScan} minus the
+   * `r11`/`r12` reads.
+   *
+   * The output is driven during the sweep. Returns the list of frequencies
+   * actually written (after exponent-encoding rounding).
+   */
+  async frequencySweep(options: {
+    /** Range start in Hz. */
+    startHz: number;
+    /** Range end in Hz (may be below start — the sweep goes either direction). */
+    endHz: number;
+    /** Number of steps across the range. Mutually exclusive with `stepHz`. */
+    steps?: number;
+    /** Step size in Hz. Mutually exclusive with `steps`. */
+    stepHz?: number;
+    /** Channel to drive. Default 0. */
+    channel?: number;
+    /** Drive amplitude for the sweep. Default: leave the current amplitude. */
+    amplitudeVpp?: number;
+    /** DC offset as a fraction of amplitude, −1…+1. Default: leave current. */
+    offsetRatio?: number;
+    /** Hold time per step, in ms. Default 0. */
+    dwellMs?: number;
+    /** Turn the output off when the sweep ends. Default true. */
+    stopOutputAtEnd?: boolean;
+    /** Cancel the sweep. */
+    signal?: AbortSignal;
+    /** Called with each frequency as it is written. */
+    onStep?: (hz: number) => void;
+  }): Promise<number[]> {
+    const channel = options.channel ?? 0;
+    assertChannel(channel);
+    if (!Number.isFinite(options.startHz) || !Number.isFinite(options.endHz)) {
+      throw new AwgError("frequencySweep needs finite startHz and endHz");
+    }
+    const span = options.endHz - options.startHz;
+    const steps =
+      options.steps ??
+      (options.stepHz ? Math.max(1, Math.round(Math.abs(span) / options.stepHz)) : 100);
+    if (steps < 1) throw new AwgError("frequencySweep needs at least one step");
+
+    if (options.amplitudeVpp !== undefined) {
+      await this.setAmplitude(channel, options.amplitudeVpp);
+    }
+    if (options.offsetRatio !== undefined) {
+      await this.setOffsetRatio(channel, options.offsetRatio);
+    }
+    await this.setOutput(channel, true);
+
+    const swept: number[] = [];
+    try {
+      for (let i = 0; i <= steps; i++) {
+        if (options.signal?.aborted) break;
+        const hz = options.startHz + (span * i) / steps;
+        await this.setFrequency(channel, hz);
+        if (options.dwellMs) await new Promise((r) => setTimeout(r, options.dwellMs));
+        swept.push(hz);
+        options.onStep?.(hz);
+      }
+    } finally {
+      if (options.stopOutputAtEnd ?? true) {
+        try {
+          await this.setOutput(channel, false);
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+    return swept;
+  }
+
   // ────────────────────────────────────────────────────────────────────────
   // Waveform upload, display, offline programs (decoded from a Spooky2 capture)
   // ────────────────────────────────────────────────────────────────────────
@@ -702,18 +812,21 @@ export class GenXPro implements SignalGenerator {
    * Decoded from a Spooky2 capture: a program slot is written as
    * ```
    * :n<slot>=<name>
-   * :p<slot>=<waveformSlot>,<amp×100>,<offset>,<dwell>,<count>,<f0×1e9>,…,<fN×1e9>,
+   * :p<slot>=<waveformSlot>,<amp×100>,<offset>,<dwell>,<count>,<f0>,…,<fN>,
    * :g<slot>=<gate schedule>
    * ```
-   * The frequency field is **integer nanohertz** (`round(Hz × 1e9)`), a different
-   * encoding from the live `w24` exponent form — confirmed by matching the values
-   * against the scan's own hit frequencies. The waveform itself is uploaded
-   * separately with {@link uploadWaveform} to `waveformSlot` and referenced here
-   * by number.
+   * The frequency field uses the same exponent encoding as the live `w24`
+   * register (see {@link encodeGenXFrequency}) — confirmed from the capture:
+   * `:p01=41,2000,120,600,1,7836,` is the 7.83 Hz Schumann program, and
+   * `:p04=44,2000,120,2700,1,183586,` is the 183.58 Hz Plant Growth program.
+   * The gate schedule carries **two values per frequency** (all-zero = no
+   * gating): a 1-frequency program is `:g01=0,0,`, a 6-frequency program is
+   * `:g07=0,0,0,0,0,0,0,0,0,0,0,0,`. The waveform itself is uploaded separately
+   * with {@link uploadWaveform} to `waveformSlot` and referenced here by number.
    *
    * Structure and frequency encoding are confirmed from the capture; the dwell
-   * unit and the offset span are taken to match the live device (seconds, and
-   * `120 ± 50`) but were not independently verified. Not yet hardware-tested.
+   * unit is taken to match the live device (seconds) but was not independently
+   * verified. Not yet hardware-tested.
    */
   async uploadProgram(
     slot: number,
@@ -722,11 +835,11 @@ export class GenXPro implements SignalGenerator {
       waveformSlot: number;
       /** Amplitude in volts (→ ×100). */
       amplitudeVpp: number;
-      /** Offset as a fraction of amplitude, −1…+1 (→ `120 ± 50`). Default 0. */
+      /** Offset as a fraction of amplitude, −1…+1 (→ `120 ± 100`). Default 0. */
       offsetRatio?: number;
       /** Hold time per frequency. Default 180. */
       dwell?: number;
-      /** Program frequencies in Hz (each stored as `round(Hz × 1e9)`). */
+      /** Program frequencies in Hz (each stored exponent-encoded). */
       frequenciesHz: readonly number[];
       /** Optional program name (`:n<slot>=`). */
       name?: string;
@@ -745,7 +858,7 @@ export class GenXPro implements SignalGenerator {
       GENX_OFFSET_CENTRE +
       Math.round(Math.max(-1, Math.min(1, program.offsetRatio ?? 0)) * GENX_OFFSET_SPAN);
     const dwell = program.dwell ?? 180;
-    const freqs = program.frequenciesHz.map(offlineFrequencyField);
+    const freqs = program.frequenciesHz.map(encodeGenXFrequency);
     const fields = [
       program.waveformSlot,
       amp,
@@ -756,7 +869,8 @@ export class GenXPro implements SignalGenerator {
     ].join(",");
     await this.command(`:p${s}=${fields},`);
 
-    const gate = (program.gate ?? new Array(14).fill(0)).join(",");
+    // Two gate values per frequency (all-zero = no gating), per the capture.
+    const gate = (program.gate ?? new Array(2 * freqs.length).fill(0)).join(",");
     await this.command(`:g${s}=${gate},`);
 
     // Spooky2 finalises a memory write with :w96=12321,
@@ -770,6 +884,69 @@ export class GenXPro implements SignalGenerator {
   async writeOfflineSlot(letter: "n" | "p" | "g", slot: number, value: string): Promise<void> {
     const s = String(slot).padStart(2, "0");
     await this.command(`:${letter}${s}=${value}`);
+  }
+
+  /**
+   * Load a parsed Spooky2 preset into offline program slots.
+   *
+   * Reproduces the sequence a Spooky2 capture shows per program: upload the
+   * waveform to a custom slot, then write the name, gate and parameters:
+   * ```
+   * :a<waveformSlot>=<samples>
+   * :n<slot>=<name>
+   * :g<slot>=<gate>
+   * :p<slot>=<waveformSlot>,<amp×100>,<offset>,<dwell>,<count>,<freq…>,
+   * ```
+   * Programs go to consecutive slots starting at `startSlot` (1 in the capture),
+   * each referencing a waveform uploaded to `waveformSlotBase + i` (41 in the
+   * capture). Only single-frequency programs are loaded — range entries are
+   * run-time sweeps (see {@link frequencySweep}) and DNA entries are not yet
+   * decodable.
+   *
+   * Amplitude defaults to the preset's `Out1_Amplitude` setting. The offset
+   * field stays at centre (120): a Spooky2 capture shows offline programs are
+   * stored with offset 120 regardless of the preset's `Out1_Offset`, which is
+   * applied at run time via the offset registers. Returns the number of
+   * programs loaded.
+   */
+  async loadPreset(
+    preset: Spooky2Preset,
+    options: {
+      /** First program slot. Default 1. */
+      startSlot?: number;
+      /** First waveform slot. Default 41. */
+      waveformSlotBase?: number;
+      /** Waveform uploaded to each program's slot. Default "sine". */
+      waveform?: Spooky2WaveformName;
+      /** Amplitude in volts. Default: the preset's `Out1_Amplitude`. */
+      amplitudeVpp?: number;
+      /** Offset as a fraction of amplitude, −1…+1. Default 0 (centre 120). */
+      offsetRatio?: number;
+    } = {},
+  ): Promise<number> {
+    const programs = presetProgramsForUpload(preset);
+    const startSlot = options.startSlot ?? 1;
+    const waveformSlotBase = options.waveformSlotBase ?? 41;
+    const waveform = options.waveform ?? "sine";
+    const samples = SPOOKY2_WAVEFORMS[waveform];
+    const amplitudeVpp =
+      options.amplitudeVpp ?? Number(preset.settings["Out1_Amplitude"] ?? 20);
+
+    for (let i = 0; i < programs.length; i++) {
+      const program = programs[i]!;
+      const slot = startSlot + i;
+      const waveformSlot = waveformSlotBase + i;
+      await this.uploadWaveform(waveformSlot, samples);
+      await this.uploadProgram(slot, {
+        waveformSlot,
+        amplitudeVpp,
+        offsetRatio: options.offsetRatio ?? 0,
+        dwell: program.dwell,
+        name: program.name,
+        frequenciesHz: program.frequenciesHz,
+      });
+    }
+    return programs.length;
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -839,20 +1016,4 @@ function assertFinite(name: string, value: number): void {
 /** Clamp a waveform sample into the device's 10-bit range. */
 function clampSample(v: number): number {
   return v < 0 ? 0 : v > 1023 ? 1023 : v;
-}
-
-/**
- * Encode a frequency for an offline program: integer nanohertz (`Hz × 1e9`).
- *
- * Done via a fixed-decimal string rather than `hz * 1e9`, because that product
- * exceeds `Number.MAX_SAFE_INTEGER` above ~9 MHz and would lose precision. Nine
- * decimal places is exactly the device's nanohertz field: e.g. 1408287.93539227
- * → `1408287935392270`, matching the captured values.
- */
-function offlineFrequencyField(hz: number): string {
-  if (!Number.isFinite(hz) || hz < 0) {
-    throw new AwgError(`program frequency must be a non-negative number, got ${hz}`);
-  }
-  const digits = hz.toFixed(9).replace(".", "");
-  return digits.replace(/^0+(?=\d)/, "");
 }

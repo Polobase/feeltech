@@ -35,7 +35,7 @@ Two of these directly confirm decisions in the driver:
 | --- | --- | --- | --- |
 | Frequency (both outputs) | 24 / 25 | **confirmed on display** | ✅ `setFrequency` |
 | Amplitude | 28 / 29 | assignment confirmed (biofeedback); scale = spec | ✅ `setAmplitude` |
-| Offset | 32 / 33 | assignment from vendor; scale assumed | ✅ `setOffset` / `setOffsetRatio` |
+| Offset | 32 / 33 | **confirmed by capture** (span ±100: `:w32=20,` ⇔ −100, `:w33=220,` ⇔ +100) | ✅ `setOffset` / `setOffsetRatio` |
 | Phase (Out 2) | 40 | vendor label | ✅ `setPhase` |
 | Output on/off (4 outputs) | 11 | confirmed driving | ✅ `setOutput`, `GenXPair` |
 | Waveform: sine, square | 20 / 21 | confirmed (current signature) | ✅ `setWaveform` |
@@ -43,7 +43,7 @@ Two of these directly confirm decisions in the driver:
 | Gating on/off | 12 / 70 | vendor label | ✅ `setGating` |
 | Out 2 modulation on/off | 13 | vendor label | ✅ `setModulation` |
 | Out 2 sync | 14 | vendor label | ✅ `setSync` |
-| Low-frequency mode | 15 / 51 | vendor label | ✅ `setLowFrequencyMode` |
+| Low-frequency mode | 15 (two fields) | **confirmed by capture** (`:w15=<a>,<b>,`; 51 never sent) | ✅ `setLowFrequencyMode` |
 | Calibration | 50 / 71 | vendor label | ✅ `calibrate` |
 | Reset | 95 | vendor label | ✅ `reset` |
 | Authentication | 90 / 92 | **confirmed on hardware** | ✅ bundled provider |
@@ -51,7 +51,9 @@ Two of these directly confirm decisions in the driver:
 | Biofeedback scan | w24 sweep + r11/r12 | **confirmed by Spooky2 capture** | ✅ `biofeedbackScan` |
 | Waveform upload (10-bit × 1024) | `:a<slot>=` | decoded from capture, not HW-tested | ✅ `uploadWaveform` |
 | Display text | `:n00=` | confirmed in capture | ✅ `setDisplayText` |
-| Offline program upload | `:n`/`:p`/`:g<slot>=` | decoded (freqs = Hz×1e9), not HW-tested | ✅ `uploadProgram` / `writeOfflineSlot` |
+| Offline program upload | `:n`/`:p`/`:g<slot>=` | **confirmed by capture** (freqs = exponent, gate = 2×count zeros, offset always 120) | ✅ `uploadProgram` / `loadPreset` / `writeOfflineSlot` |
+| Frequency sweep | w24 loop | **confirmed by capture** (linear steps, ~82–84/range) | ✅ `frequencySweep` |
+| Firmware version | `:r02=` | **confirmed by capture** (`:r02=200.`) | ✅ `readFirmwareVersion` |
 | Program running (host-side, dwell) | — | device-agnostic | ✅ `runProgram` |
 
 ## Gaps
@@ -70,8 +72,9 @@ Ranked by value against how reachable each is without an oscilloscope.
   resonance detector. Absolute amps still need a reference meter, but the
   `/100` scaling and the running-average/hit logic are now known.
 - **Offset scale confirmation.** Frequency is display-verified and amplitude is
-  spec-confirmed (centivolts); offset (centre 120, ±50 span) is still assumed and
-  would need a scope or DC meter.
+  spec-confirmed (centivolts); the offset span is now **confirmed ±100** by the
+  capture (`:w32=20,` ⇔ Offset −100, `:w33=220,` ⇔ Offset +100), so the driver's
+  `GENX_OFFSET_SPAN = 100` is no longer assumed.
 
 ### What a Spooky2 serial capture settled
 
@@ -106,20 +109,36 @@ Standalone programs are stored across per-slot commands, all decoded from the
 capture:
 
 - `:n<slot>=<name>` — program/waveform name (`:n06=(-)-beta-Elemene`)
-- `:p<slot>=<waveformSlot>,<amp×100>,<offset=120>,<dwell>,<count>,<f0×1e9>,…,` — parameters
+- `:p<slot>=<waveformSlot>,<amp×100>,<offset=120>,<dwell>,<count>,<f0>,…,` — parameters
 - `:g<slot>=<gate schedule>` — gating (all-zero = none)
 - `:a<slot>=<samples>` — the waveform table (above)
 
-The frequency field is **integer nanohertz** (`round(Hz × 1e9)`) — proven by
-matching the stored values against the scan's own hit frequencies
-(`1408287935392270` ÷ 1e9 = 1408287.93539227 Hz). This is a *different* encoding
-from the live `w24` exponent form. `uploadProgram(slot, {...})` builds the whole
-sequence; `writeOfflineSlot()` remains for raw field access. The dwell unit and
-offset span are assumed to match the live device and aren't independently
-verified, and none of it is hardware-tested yet.
+The frequency field uses the **same exponent encoding as live `w24`** —
+`round(Hz × 1000) + 6` for Hz values, e.g. `:p01=41,2000,120,600,1,7836,` =
+7.83 Hz and `:p04=44,2000,120,2700,1,183586,` = 183.58 Hz. (An earlier claim
+that it was integer nanohertz was a fluke: values ending in `0` decode
+identically both ways.) The **gate field is `2 × count` zeros** (`:g01=0,0,` for
+one frequency, `:g07=0,0,0,0,0,0,0,0,0,0,0,0,` for six), and offline programs are
+stored with **offset 120 (centre) regardless of the preset's `Out1_Offset`** —
+offsets are applied at run time via registers 32/33. `uploadProgram(slot, {...})`
+builds the whole sequence; `loadPreset()` parses a Spooky2 preset `.txt` and
+uploads its single-frequency programs 1:1. Ranges are run-time sweeps;
+radionics/spectrum singles (`396=11`) are decoded `freq ÷ wcm` → 36 Hz; DNA
+`~…` strings are preserved raw (their decode is an open research item).
+`writeOfflineSlot()` remains for raw field access. The dwell unit is assumed to
+match the live device and isn't independently verified, and none of it is
+hardware-tested yet.
 
-Sweep and gating *configuration* were not exercised in the capture, but nothing
-suggests they use registers outside the mapped set.
+### Frequency sweep — decoded and implemented
+
+A second capture (running a preset) shows Spooky2 sweeping frequencies with a
+plain host-side loop: sequential `:w24=<freq>,` writes, **no biofeedback reads**,
+linear in Hz within each segment (~0.18 Hz/step at 3.44 Hz, ~3.9 Hz/step at
+72 Hz), ~82–84 steps per range, six programs × three segments (low sweep /
+single / high sweep). The single frequencies decode as preset frequency ÷
+WCM(11): `396→36`, `417→37.909`, `528→48`, etc. Ranges are run-time sweeps, not
+offline slots. `frequencySweep()` reproduces this (linear steps, output off at
+the end by default).
 
 ### Spectrum — understood, math implemented
 
@@ -155,9 +174,18 @@ biofeedback detector are hardware-verified. Spooky2's wobble and scan turned out
 to be host-side loops over the frequency register, not device features, so they
 need no new protocol.
 
+A second capture (preset loading + running) settled the **offline program
+upload** (`:n`/`:p`/`:g<slot>=` — exponent-encoded frequencies, `2 × count` gate
+zeros, offset always 120) and the **frequency sweep** (plain `w24` loop, linear
+steps). Both are implemented: `loadPreset()` parses Spooky2 preset `.txt` files
+and uploads their single-frequency programs 1:1, and `frequencySweep()`
+reproduces the sweep. The preset parser also handles range entries (run-time
+sweeps), decodes radionics/spectrum singles (`396=11` → 36 Hz, `freq ÷ wcm`),
+and preserves DNA `~…` strings raw — decoding those is the one open protocol
+question left.
+
 What genuinely remains: the **full waveform set via upload** (the device takes
-1024-sample tables, which we ship but don't yet push), the **offline program
-upload** (`:n<slot>=` — standalone operation, low priority), and confirming
-**sweep / configurable gating** (not exercised in the capture, but no evidence
-they use unmapped registers). Plus absolute **calibration** of amplitude/offset/
-biofeedback counts, which needs a meter, not more protocol work.
+1024-sample tables, which we ship but don't yet push), **live gating**
+(register 12; the offline gate schedule is implemented), and absolute
+**calibration** of amplitude/offset/biofeedback counts, which needs a meter, not
+more protocol work.

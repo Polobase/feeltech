@@ -75,3 +75,6 @@ export {
   spooky2Waveform,
 } from "./waveforms.js";
 export type { Spooky2WaveformName } from "./waveforms.js";
+
+export { parsePreset, parseFrequencyLine, presetProgramsForUpload } from "./presets.js";
+export type { Spooky2Preset, PresetProgram, PresetFrequency } from "./presets.js";
