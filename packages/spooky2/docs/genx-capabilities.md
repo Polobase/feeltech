@@ -27,14 +27,17 @@ Two of these directly confirm decisions in the driver:
   (`encodeGenXFrequency`): the exponent code carries up to eight places. Verified
   by reading frequencies back off the device display.
 - **0.01 V amplitude resolution** confirms the amplitude register is centivolts
-  (`GENX_AMPLITUDE_SCALE = 100`).
+  of **peak** amplitude: 0–1000 counts cover 0–10 V peak (0.01 V per count),
+  i.e. 0–20 Vpp at `vpp × 50`. Confirmed by a capture where a `20` preset drove
+  the live register `:w28=1000,` while the offline `:p` field stored `2000`
+  (peak-to-peak centivolts, `vpp × 100`).
 
 ## Coverage
 
 | Capability | Register(s) | Status | In driver |
 | --- | --- | --- | --- |
 | Frequency (both outputs) | 24 / 25 | **confirmed on display** | ✅ `setFrequency` |
-| Amplitude | 28 / 29 | assignment confirmed (biofeedback); scale = spec | ✅ `setAmplitude` |
+| Amplitude | 28 / 29 | assignment confirmed (biofeedback); peak-centivolt scale confirmed by capture | ✅ `setAmplitude` |
 | Offset | 32 / 33 | **confirmed by capture** (span ±100: `:w32=20,` ⇔ −100, `:w33=220,` ⇔ +100) | ✅ `setOffset` / `setOffsetRatio` |
 | Phase (Out 2) | 40 | vendor label | ✅ `setPhase` |
 | Output on/off (4 outputs) | 11 | confirmed driving | ✅ `setOutput`, `GenXPair` |
@@ -72,9 +75,9 @@ Ranked by value against how reachable each is without an oscilloscope.
   resonance detector. Absolute amps still need a reference meter, but the
   `/100` scaling and the running-average/hit logic are now known.
 - **Offset scale confirmation.** Frequency is display-verified and amplitude is
-  spec-confirmed (centivolts); the offset span is now **confirmed ±100** by the
-  capture (`:w32=20,` ⇔ Offset −100, `:w33=220,` ⇔ Offset +100), so the driver's
-  `GENX_OFFSET_SPAN = 100` is no longer assumed.
+  capture-confirmed (peak centivolts, `vpp × 50`); the offset span is now
+  **confirmed ±100** by the capture (`:w32=20,` ⇔ Offset −100, `:w33=220,` ⇔
+  Offset +100), so the driver's `GENX_OFFSET_SPAN = 100` is no longer assumed.
 
 ### What a Spooky2 serial capture settled
 

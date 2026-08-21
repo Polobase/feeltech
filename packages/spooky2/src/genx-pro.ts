@@ -120,7 +120,14 @@ export const GENX_PRO_REGISTERS = {
   authResponse: 92,
 } as const;
 
-/** Amplitude counts per volt. Mirrored from the XM (centivolts); not confirmed. */
+/**
+ * Amplitude counts per volt for the *offline* `:p` amplitude field.
+ *
+ * This is centivolts of peak-to-peak voltage (`amplitudeVpp × 100`), confirmed
+ * from a capture: a `20` preset stores `2000`. The *live* register (28/29) is
+ * half of this — centivolts of peak amplitude — and is produced by
+ * {@link amplitudeRegisterValue}.
+ */
 export const GENX_AMPLITUDE_SCALE = 100;
 
 /**

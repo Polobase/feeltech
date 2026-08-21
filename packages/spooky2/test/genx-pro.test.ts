@@ -55,11 +55,12 @@ describe("GenXPro register map (hardware-confirmed)", () => {
     assert.deepEqual(stripCRLF(transport.writes), [":w24=72757,"]);
   });
 
-  it("writes amplitude to register 28/29, field 1", async () => {
+  it("writes amplitude to register 28/29, field 1 (peak centivolts)", async () => {
     const { transport, device } = await pro();
     await device.setAmplitude(0, 5);
     await device.setAmplitude(1, 3.3);
-    assert.deepEqual(stripCRLF(transport.writes), [":w28=500,", ":w29=330,"]);
+    // peak centivolts = vpp × 50, matching the capture's :w28=1000, for 20 Vpp
+    assert.deepEqual(stripCRLF(transport.writes), [":w28=250,", ":w29=165,"]);
   });
 
   it("writes waveform to register 20/21, field 1", async () => {
@@ -153,7 +154,7 @@ describe("GenXPro applyStep", () => {
     assert.deepEqual(stripCRLF(transport.writes), [
       ":w20=12,",
       ":w24=10008,",
-      ":w28=500,",
+      ":w28=250,",
       ":w11=1,0,",
     ]);
   });
@@ -272,8 +273,8 @@ describe("GenXPro frequency sweep", () => {
     assert.equal(swept.at(-1), 17.93);
 
     const writes = transport.writes.map((w) => w.trimEnd());
-    // setup: amplitude, offset, output on
-    assert.ok(writes.includes(":w28=1000,"));
+    // setup: amplitude (peak centivolts = vpp × 50), offset, output on
+    assert.ok(writes.includes(":w28=500,"));
     assert.ok(writes.includes(":w32=20,")); // offset −1 → 120 − 100
     assert.ok(writes.includes(":w11=1,0,"));
     // each step wrote an exponent-encoded frequency to w24
@@ -474,7 +475,7 @@ describe("GenXPro authentication", () => {
     await device.open();
     assert.equal(device.authenticated, false);
     await device.setAmplitude(0, 5);
-    assert.ok(transport.writes.some((w) => w === ":w28=500,\r\n"));
+    assert.ok(transport.writes.some((w) => w === ":w28=250,\r\n"));
   });
 });
 

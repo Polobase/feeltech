@@ -63,12 +63,14 @@ There is **no live-parameter readback**: the `:r*` space is offline-program
 memory (zero until a program is loaded) and the two analog biofeedback readings
 (`:r11` current, `:r12` angle), not a mirror of the write registers.
 
-## Scale factors — still unmeasured
+## Scale factors — frequency settled, amplitude settled, offset settled
 
-The register *assignments* are settled; their *encodings* are not. The driver
-uses XM-analogous defaults — frequency Hz×100 (or ×100000 in low-frequency mode,
-below 600 Hz), amplitude in centivolts, offset centred on 120 — and marks them
-in code as needing scope confirmation.
+The register *assignments* are settled, and a Spooky2 capture settled their
+*encodings*: frequency uses an exponent form (`mantissa×10 + (8−places)`, see
+`encodeGenXFrequency`), the live amplitude register is peak centivolts
+(`vpp × 50`), the offline `:p` amplitude field is peak-to-peak centivolts
+(`vpp × 100`), and offset is centred on 120 with a span of ±100. The driver
+uses these, so nothing here is assumed any more.
 
 ## Authentication
 

@@ -65,12 +65,15 @@ export function decodeGenXFrequency(v: number): number {
 }
 
 /**
- * Amplitude in centivolts.
+ * Amplitude register value for a peak-to-peak voltage.
  *
- * The register assignment (28/29) is confirmed — stepping it moved the device's
- * biofeedback current sensor — and the centivolt scale matches the published
- * "0.01 V amplitude resolution" spec.
+ * The register stores centivolts of *peak* amplitude, so a peak-to-peak input
+ * is halved: `vpp / 2 × 100 = vpp × 50`. Confirmed from a Spooky2 capture,
+ * where a `20` (20 Vpp) preset drove the live register `:w28=1000,` — half of
+ * the offline `:p` amplitude field (`2000`, which stores peak-to-peak
+ * centivolts). This also matches the published "20 Vpp max / 0.01 V
+ * resolution" spec: 0–1000 counts cover 0–10 V peak (0.01 V per count).
  */
-export function amplitudeRegisterValue(volts: number): number {
-  return Math.round(Math.max(0, volts) * 100);
+export function amplitudeRegisterValue(vpp: number): number {
+  return Math.round(Math.max(0, vpp) * 50);
 }

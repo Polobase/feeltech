@@ -54,9 +54,9 @@ describe("encodeGenXFrequency", () => {
 });
 
 describe("amplitudeRegisterValue", () => {
-  it("converts volts to centivolts", () => {
-    assert.equal(amplitudeRegisterValue(5), 500);
-    assert.equal(amplitudeRegisterValue(3.3), 330);
+  it("converts peak-to-peak volts to peak centivolts (vpp × 50)", () => {
+    assert.equal(amplitudeRegisterValue(5), 250);
+    assert.equal(amplitudeRegisterValue(3.3), 165);
     assert.equal(amplitudeRegisterValue(-1), 0);
   });
 });
