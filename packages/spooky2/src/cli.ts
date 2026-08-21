@@ -12,7 +12,7 @@
  */
 
 import { parseArgs, type ParseArgsConfig } from "node:util";
-import { readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { AwgError, DeviceRegistry, type ChannelStep } from "@freqgen/core";
@@ -21,6 +21,7 @@ import { NodeSerialTransport, listPorts, describeBridge } from "@freqgen/core/no
 import { SPOOKY2_DEVICES } from "./devices.js";
 import { parsePreset, presetToProgram } from "./presets.js";
 import { runPresetRun } from "./run-preset.js";
+import { detectHits, toBfbCsv, toBfbFrequenciesCsv } from "./biofeedback.js";
 
 const registry = new DeviceRegistry().registerAll(SPOOKY2_DEVICES);
 
@@ -51,6 +52,19 @@ const COMMAND_OPTIONS: Record<string, NonNullable<ParseArgsConfig["options"]>> =
     channels: { type: "string" },
     "sweep-steps": { type: "string" },
   },
+  scan: {
+    start: { type: "string", default: "1" },
+    end: { type: "string", default: "101" },
+    step: { type: "string", default: "0.25" },
+    loops: { type: "string", default: "2" },
+    amp: { type: "string", default: "10" },
+    "max-hits": { type: "string", default: "60" },
+    channel: { type: "string", default: "1" },
+    out: { type: "string" },
+    "program-file": { type: "string" },
+    "program-name": { type: "string" },
+    dwell: { type: "string" },
+  },
 };
 
 const USAGE = `Usage: spooky2 <command> [options]
@@ -65,6 +79,10 @@ Commands:
   run-preset                 Run a Spooky2 preset file on a generator
                              --device xm|genx|genx-pro  --preset <file.txt>
                              --channels 1|2|1,2  --sweep-steps <n>
+  scan                       Biofeedback scan + hit detection (Gen X Pro)
+                             --device genx-pro --port <path> --start <Hz> --end <Hz>
+                             --step <Hz> --loops <n> --amp <Vpp> --max-hits <n> --channel 1|2
+                             --out <scan.csv>  --program-file <BFB_Frequencies.csv> --program-name <name>
 
 Global options:
   -d, --device <id>          Driver to use (see \`spooky2 devices\`)
@@ -257,6 +275,80 @@ function parseChannels(value: unknown): number[] | undefined {
   });
 }
 
+async function cmdScan(values: ParsedCli["values"]): Promise<void> {
+  const deviceId = values["device"] ? String(values["device"]) : undefined;
+  if (!deviceId) {
+    throw new AwgError("--device is required — run `spooky2 devices` to see the options");
+  }
+  const path = values["port"] ? String(values["port"]) : undefined;
+  if (!path) {
+    throw new AwgError("--port is required — run `spooky2 list` to find it");
+  }
+
+  const start = parseNumber("start", values["start"]);
+  const end = parseNumber("end", values["end"]);
+  const step = parseNumber("step", values["step"]);
+  const loops = parseNumber("loops", values["loops"]);
+  const amp = parseNumber("amp", values["amp"]);
+  const maxHits = parseNumber("max-hits", values["max-hits"]);
+  const channel = parseChannel(values["channel"]);
+
+  const descriptor = registry.get(deviceId);
+  if (descriptor && descriptor.verified !== true) {
+    console.error(
+      `⚠️  ${descriptor.label} is not hardware-verified — confirm output with a scope.`,
+    );
+  }
+
+  const device = registry.create(deviceId, new NodeSerialTransport(path), {
+    debug: values["debug"] === true,
+  });
+  await device.open();
+  try {
+    console.log(
+      `Scanning ${start}→${end} Hz, step ${step}, ${loops} loops, baseline, ${amp} Vpp, Ch${channel + 1}…`,
+    );
+    const samples = await (device as import("./genx-pro.js").GenXPro).biofeedbackScan({
+      startHz: start,
+      endHz: end,
+      stepHz: step,
+      loops,
+      baseline: true,
+      amplitudeVpp: amp,
+      channel,
+    });
+
+    const hits = detectHits(
+      samples.map((s) => ({ hz: s.hz, value: s.current ?? 0 })),
+      { window: 20, maxHits },
+    );
+
+    console.log(`Hit frequencies (${hits.length}):`);
+    console.log(hits.map((h) => h.hz.toFixed(2)).join(", "));
+
+    if (values["out"]) {
+      writeFileSync(String(values["out"]), toBfbCsv(samples, { dateTime: bfbStamp(new Date()) }));
+      console.log(`Scan CSV written to ${values["out"]}`);
+    }
+
+    if (values["program-file"]) {
+      const row = toBfbFrequenciesCsv(hits.map((h) => h.hz), {
+        name: values["program-name"] ? String(values["program-name"]) : undefined,
+        dwellSeconds: values["dwell"] !== undefined ? parseNumber("dwell", values["dwell"]) : undefined,
+      });
+      appendFileSync(String(values["program-file"]), row);
+      console.log(`Hit program appended to ${values["program-file"]}`);
+    }
+  } finally {
+    await device.close();
+  }
+}
+
+function bfbStamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}_${p(d.getSeconds())}`;
+}
+
 export async function run(argv: string[]): Promise<void> {
   const { command, values } = parseCliArgs(argv);
   if (command === "help" || values["help"]) {
@@ -273,6 +365,8 @@ export async function run(argv: string[]): Promise<void> {
       return cmdSet(values);
     case "run-preset":
       return cmdRunPreset(values);
+    case "scan":
+      return cmdScan(values);
     default:
       throw new AwgError(`Unknown command "${command}"`);
   }

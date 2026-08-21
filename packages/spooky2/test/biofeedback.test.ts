@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { detectHits, convertBiofeedback, toBfbCsv, type BiofeedbackPoint } from "../src/biofeedback.js";
+import { detectHits, convertBiofeedback, toBfbCsv, toBfbFrequenciesCsv, type BiofeedbackPoint } from "../src/biofeedback.js";
 
 // First 12 rows of Spooky2's RawAnalysisData.tmp (freq, Data, RA, Data-PrevRA, Hit),
 // captured verbatim. Hits at 2.25 and 3.5; 1.5 is a peak but ranks below them.
@@ -75,6 +75,17 @@ describe("convertBiofeedback / toBfbCsv", () => {
       csv,
       "Date_Time,Frequency,BPM,HRV,Angle,Current,Angle + Current,Spare,Spare,Spare,Spare,Spare\n" +
         "20260821_1411_32,1,0,0,0,0,0,0,0,0,0,0\n",
+    );
+  });
+
+  it("renders a BFB_Frequencies.csv program row (Spooky2-loadable)", () => {
+    const row = toBfbFrequenciesCsv([95.5, 73, 69.75, 3.5, 2.25], {
+      name: "BFB 20260821 Low Frequency",
+      createdAt: new Date(2026, 7, 21, 14, 14, 3),
+    });
+    assert.equal(
+      row,
+      '"BFB 20260821 Low Frequency",BFB,,"Program Created 21.08.2026 14:14:03","95.5,73,69.75,3.5,2.25",,,180\n',
     );
   });
 });

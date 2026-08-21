@@ -163,3 +163,45 @@ export function toBfbCsv(
   });
   return [header, ...rows].join("\n") + "\n";
 }
+
+/**
+ * Render one row of Spooky2's `BFB_Frequencies.csv` — the program file the
+ * Spooky2 application loads back in. Each row is a program: a name, a `BFB`
+ * marker, a creation stamp, the comma-separated hit frequencies, and a dwell:
+ *
+ * `"BFB 20260821 Low Frequency",BFB,,"Program Created 21.08.2026 14:14:03","95.5,73,…",,,180`
+ */
+export function toBfbFrequenciesCsv(
+  hits: readonly number[],
+  options: {
+    /** Program name (first field). Default `BFB <date>`. */
+    name?: string;
+    /** Creation time for the "Program Created" field. Default now. */
+    createdAt?: Date;
+    /** Dwell in seconds (last field). Default 180. */
+    dwellSeconds?: number;
+  } = {},
+): string {
+  const now = options.createdAt ?? new Date();
+  const stamp = `Program Created ${fmtDate(now)} ${fmtTime(now)}`;
+  const name = options.name ?? `BFB ${compactDate(now)}`;
+  const dwell = options.dwellSeconds ?? 180;
+  // Minimal decimal places, like Spooky2 writes them ("95.5", "73", "69.75").
+  const freqs = hits.map((h) => String(Number(h.toFixed(4)))).join(",");
+  return `"${name}",BFB,,"${stamp}","${freqs}",,,${dwell}\n`;
+}
+
+function compactDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+}
+
+function fmtDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
+function fmtTime(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
