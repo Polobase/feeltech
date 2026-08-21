@@ -646,11 +646,13 @@ export class GenXPro implements SignalGenerator {
     amplitudeVpp?: number;
     /** Settle time before reading, per step, in ms. Default 0. */
     dwellMs?: number;
+    /** Number of passes to average (Spooky2's `BFB_Loops`). Default 1. */
+    loops?: number;
     /** Turn the output off when the scan ends. Default true. */
     stopOutputAtEnd?: boolean;
     /** Cancel the scan. */
     signal?: AbortSignal;
-    /** Called with each sample as it is taken. */
+    /** Called with each sample as it is taken (per loop). */
     onSample?: (sample: BiofeedbackSample) => void;
   }): Promise<BiofeedbackSample[]> {
     const channel = options.channel ?? 0;
@@ -663,23 +665,31 @@ export class GenXPro implements SignalGenerator {
       options.steps ??
       (options.stepHz ? Math.max(1, Math.round(Math.abs(span) / options.stepHz)) : 100);
     if (steps < 1) throw new AwgError("biofeedbackScan needs at least one step");
+    const loops = Math.max(1, Math.round(options.loops ?? 1));
 
     if (options.amplitudeVpp !== undefined) {
       await this.setAmplitude(channel, options.amplitudeVpp);
     }
     await this.setOutput(channel, true);
 
-    const samples: BiofeedbackSample[] = [];
+    // Accumulate per-step sums so `loops > 1` averages, like Spooky2's export.
+    const sums = new Array<{ hz: number; current: number; phaseAngle: number }>(steps + 1);
+    for (let i = 0; i <= steps; i++) {
+      sums[i] = { hz: options.startHz + (span * i) / steps, current: 0, phaseAngle: 0 };
+    }
+
     try {
-      for (let i = 0; i <= steps; i++) {
-        if (options.signal?.aborted) break;
-        const hz = options.startHz + (span * i) / steps;
-        await this.setFrequency(channel, hz);
-        if (options.dwellMs) await new Promise((r) => setTimeout(r, options.dwellMs));
-        const { current, phaseAngle } = await this.readBiofeedback();
-        const sample: BiofeedbackSample = { hz, current, phaseAngle };
-        samples.push(sample);
-        options.onSample?.(sample);
+      for (let loop = 0; loop < loops; loop++) {
+        for (let i = 0; i <= steps; i++) {
+          if (options.signal?.aborted) return [];
+          const hz = sums[i]!.hz;
+          await this.setFrequency(channel, hz);
+          if (options.dwellMs) await new Promise((r) => setTimeout(r, options.dwellMs));
+          const { current, phaseAngle } = await this.readBiofeedback();
+          sums[i]!.current += current ?? 0;
+          sums[i]!.phaseAngle += phaseAngle ?? 0;
+          options.onSample?.({ hz, current, phaseAngle });
+        }
       }
     } finally {
       if (options.stopOutputAtEnd ?? true) {
@@ -690,7 +700,12 @@ export class GenXPro implements SignalGenerator {
         }
       }
     }
-    return samples;
+
+    return sums.map((s) => ({
+      hz: s.hz,
+      current: s.current / loops,
+      phaseAngle: s.phaseAngle / loops,
+    }));
   }
 
   /**
