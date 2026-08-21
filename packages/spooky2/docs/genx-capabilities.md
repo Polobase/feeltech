@@ -145,6 +145,12 @@ is 36 Hz. Each single and each sweep lasts `wcm` seconds (11 s), so a program is
 sweep; `presetToProgram()` + `runPresetRun()` reproduce the whole preset on any
 `SignalGenerator` (Gen X Pro, FeelTech, …).
 
+One known artefact: the very first sweep in the capture is preceded by a
+two-value **wobble/ramp lead-in** (`3.440` Hz for 0.83 s, then `4.737` Hz for
+0.04 s) whose step sizes and dwells differ from the regular sweep. It is a
+one-off at capture start (programs 2–6 start cleanly at `÷ wcm`) and is not
+reproduced by the library, which sweeps the clean `÷ wcm` range.
+
 ### Spectrum — understood, math implemented
 
 The Spooky2 User's Guide settled how "Spectrum" (and the DNA molecular
