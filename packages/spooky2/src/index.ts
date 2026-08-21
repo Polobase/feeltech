@@ -95,5 +95,11 @@ export type {
 } from "./presets.js";
 export { runPresetRun } from "./run-preset.js";
 export type { RunPresetOptions } from "./run-preset.js";
-export { detectHits } from "./biofeedback.js";
-export type { BiofeedbackPoint, BiofeedbackHit, DetectHitsOptions } from "./biofeedback.js";
+export { detectHits, convertBiofeedback, toBfbCsv } from "./biofeedback.js";
+export type {
+  BiofeedbackPoint,
+  BiofeedbackHit,
+  DetectHitsOptions,
+  BiofeedbackCalibration,
+  CalibratedBiofeedback,
+} from "./biofeedback.js";

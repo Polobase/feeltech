@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { detectHits, type BiofeedbackPoint } from "../src/biofeedback.js";
+import { detectHits, convertBiofeedback, toBfbCsv, type BiofeedbackPoint } from "../src/biofeedback.js";
 
 // First 12 rows of Spooky2's RawAnalysisData.tmp (freq, Data, RA, Data-PrevRA, Hit),
 // captured verbatim. Hits at 2.25 and 3.5; 1.5 is a peak but ranks below them.
@@ -50,5 +50,31 @@ describe("detectHits", () => {
     const hits = detectHits(wave, { window: 7, maxHits: 2 });
     assert.equal(hits.length, 2);
     assert.deepEqual(hits.map((h) => h.hz), [1, 3]);
+  });
+});
+
+describe("convertBiofeedback / toBfbCsv", () => {
+  it("converts raw counts using the device-spec scale and a baseline", () => {
+    // 42448 counts, 3.4 µA/count, baseline 42448 → 0 mA.
+    assert.equal(convertBiofeedback(42448, 0, { currentBaseline: 42448 }).currentMa, 0);
+    // 50 counts above baseline → 50 × 3.4 µA = 0.17 mA.
+    assert.equal(
+      Math.round(convertBiofeedback(42498, 0, { currentBaseline: 42448 }).currentMa * 1000) / 1000,
+      0.17,
+    );
+    // 0.0015°/count.
+    assert.equal(convertBiofeedback(0, 5208, { angleBaseline: 5208 }).angleDeg, 0);
+  });
+
+  it("renders Spooky2's BFB CSV column layout", () => {
+    const csv = toBfbCsv(
+      [{ hz: 1, current: 42448, phaseAngle: 5208 }],
+      { dateTime: "20260821_1411_32", calibration: { currentBaseline: 42448, angleBaseline: 5208 } },
+    );
+    assert.equal(
+      csv,
+      "Date_Time,Frequency,BPM,HRV,Angle,Current,Angle + Current,Spare,Spare,Spare,Spare,Spare\n" +
+        "20260821_1411_32,1,0,0,0,0,0,0,0,0,0,0\n",
+    );
   });
 });

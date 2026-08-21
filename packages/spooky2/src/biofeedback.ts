@@ -88,3 +88,78 @@ export function detectHits(
   peaks.sort((a, b) => b.deviation - a.deviation);
   return peaks.slice(0, maxHits);
 }
+
+/**
+ * Raw-to-engineering-unit calibration for the biofeedback detector.
+ *
+ * The detector returns 16-bit raw counts for current (`:r11`) and phase angle
+ * (`:r12`). The device spec quotes 3.4 µA and 0.0015° per count, but the scan
+ * values Spooky2 writes are *deltas* from a baseline that depends on the
+ * sample, amplitude and wiring — so the baseline must be calibrated on the
+ * hardware you are driving. Pass the same calibration to `toBfbCsv` and the
+ * values match Spooky2's own CSV.
+ */
+export interface BiofeedbackCalibration {
+  /** Microamps per raw current count. Default: 3.4 (device spec). */
+  currentUaPerCount?: number;
+  /** Degrees per raw phase-angle count. Default: 0.0015 (device spec). */
+  angleDegPerCount?: number;
+  /** Raw current count that reads as 0 mA (the sample's resting current). */
+  currentBaseline?: number;
+  /** Raw phase-angle count that reads as 0° (the sample's resting phase). */
+  angleBaseline?: number;
+}
+
+/** A calibrated reading: current in mA and phase angle in degrees. */
+export interface CalibratedBiofeedback {
+  currentMa: number;
+  angleDeg: number;
+}
+
+/** Convert raw detector counts to mA and degrees. */
+export function convertBiofeedback(
+  current: number | null,
+  phaseAngle: number | null,
+  calibration: BiofeedbackCalibration = {},
+): CalibratedBiofeedback {
+  const uaPerCount = calibration.currentUaPerCount ?? 3.4;
+  const degPerCount = calibration.angleDegPerCount ?? 0.0015;
+  const currentBaseline = calibration.currentBaseline ?? 0;
+  const angleBaseline = calibration.angleBaseline ?? 0;
+  return {
+    currentMa: current === null ? NaN : (current - currentBaseline) * uaPerCount / 1000,
+    angleDeg: phaseAngle === null ? NaN : (phaseAngle - angleBaseline) * degPerCount,
+  };
+}
+
+/**
+ * Render scan samples in Spooky2's `BFB_<date>.csv` column layout:
+ *
+ * `Date_Time,Frequency,BPM,HRV,Angle,Current,Angle + Current,Spare,…`
+ *
+ * BPM and HRV are always 0 for a GeneratorX scan (no physiological sensor), and
+ * `Angle + Current` is the arithmetic sum, exactly as Spooky2 writes it.
+ */
+export function toBfbCsv(
+  samples: ReadonlyArray<{
+    hz: number;
+    current: number | null;
+    phaseAngle: number | null;
+  }>,
+  options: {
+    /** `Date_Time` stamp for every row, e.g. `20260821_1411_32`. */
+    dateTime: string;
+    calibration?: BiofeedbackCalibration;
+  },
+): string {
+  const header = "Date_Time,Frequency,BPM,HRV,Angle,Current,Angle + Current,Spare,Spare,Spare,Spare,Spare";
+  const rows = samples.map((s) => {
+    const { currentMa, angleDeg } = convertBiofeedback(s.current, s.phaseAngle, options.calibration);
+    const fmt = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 100) / 100) : "0");
+    const angle = fmt(angleDeg);
+    const current = fmt(currentMa);
+    const sum = fmt(angleDeg + currentMa);
+    return `${options.dateTime},${s.hz},0,0,${angle},${current},${sum},0,0,0,0,0`;
+  });
+  return [header, ...rows].join("\n") + "\n";
+}
