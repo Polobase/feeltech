@@ -1,10 +1,12 @@
-# feeltech
+# @freqgen/feeltech
 
-[![CI](https://github.com/Polobase/feeltech/actions/workflows/ci.yml/badge.svg)](https://github.com/Polobase/feeltech/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/feeltech)](https://www.npmjs.com/package/feeltech)
+[![npm](https://img.shields.io/npm/v/@freqgen/feeltech)](https://www.npmjs.com/package/@freqgen/feeltech)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A comprehensive TypeScript library **and CLI** for controlling **FeelTech / FeelElec FY-series arbitrary waveform generators** — FY2300, FY6300, FY6600, FY6800, FY6900, FY8300 — over USB serial.
+A comprehensive TypeScript library **and CLI** for controlling **FeelTech / FeelElec FY-series arbitrary waveform generators** — FY2300, FY6300, FY6600, FY6800, FY6900, FY8300 — over USB serial. Part of the [`@freqgen`](../../README.md#feature-matrix) monorepo; the FY3200S/FY3224S ship in this package as a separate `FY3200S` driver.
+
+> Formerly published as `feeltech`. The unscoped package still works; new
+> releases are `@freqgen/feeltech`.
 
 Works in **Node.js** (via [`serialport`](https://serialport.io)) and in **browsers** (via the [Web Serial API](https://developer.mozilla.org/docs/Web/API/Web_Serial_API)) from a single source tree.
 
@@ -17,13 +19,13 @@ The protocol implementation has been verified empirically against a real **FY630
 - **Dual environment.** Same TypeScript API in Node and the browser. Per-environment transports are dynamically imported, so browser bundlers won't pull in `serialport`.
 - **Full command coverage** — channel parameters, modulation (AM/FM/PM/ASK/FSK/PSK/Burst), sweep, frequency counter / pulse-width measurement, save/load slots, sync, cascade, identity.
 - **Arbitrary waveform upload** — upload custom waveforms to device memory (14-bit, 8192 samples per waveform), with `resampleWaveform()`/`normalizeWaveform()` helpers for arbitrary-length data.
-- **CLI included** — `npx feeltech list | info | set | sweep | measure | waveforms | upload`.
+- **CLI included** — `npx @freqgen/feeltech list | info | set | sweep | measure | waveforms | upload`.
 - **Port auto-detection** — `connectNode()` without a path finds the generator's USB serial adapter (CH340/CP210x/PL2303) automatically; the device path changing between USB ports stops mattering.
 - **Auto-detection of the device family** (FY2300 vs. FY6300/6900 family) by querying `UMO`. Encoding/decoding is automatically chosen for the detected family.
 - **Robust framing** with retry logic — handles trailing empty newlines, slow responses, and timing quirks transparently.
 - **Verified writes.** FY firmware occasionally acks a write without applying it; every parameter setter reads the value back and retries automatically (opt out with `verifyWrites: false`).
 - **Strict types.** Every command is typed; channel state and measurement results are exposed as plain TypeScript interfaces. Enums are `as const` objects, so the library works under `isolatedModules` and Node's type stripping.
-- **Testable without hardware** — a `MockTransport` ships under `feeltech/testing`.
+- **Testable without hardware** — a `MockTransport` ships under `@freqgen/feeltech/testing`.
 - **No build step required for the library** — ships pre-built ESM with `.d.ts` files.
 
 ---
@@ -31,10 +33,10 @@ The protocol implementation has been verified empirically against a real **FY630
 ## Installation
 
 ```bash
-npm install feeltech
+npm install @freqgen/feeltech
 ```
 
-The Node serial backend ([`serialport`](https://serialport.io)) is an **optional dependency** — npm installs it automatically, so the library and the `npx feeltech` CLI work out of the box. If its native build ever fails on an exotic platform (or you install with `--omit=optional`), Node usage will tell you to `npm install serialport` explicitly.
+The Node serial backend ([`serialport`](https://serialport.io)) is an **optional dependency** — npm installs it automatically, so the library and the `npx @freqgen/feeltech` CLI work out of the box. If its native build ever fails on an exotic platform (or you install with `--omit=optional`), Node usage will tell you to `npm install serialport` explicitly.
 
 `serialport` is **not** required in the browser (the bundler will see the `browser` field in `package.json` and replace it with `false`, and it never enters your bundle).
 
@@ -45,7 +47,7 @@ The Node serial backend ([`serialport`](https://serialport.io)) is an **optional
 ### Node.js
 
 ```ts
-import { connectNode, Channel } from "feeltech";
+import { connectNode, Channel } from "@freqgen/feeltech";
 
 const fy = await connectNode(); // no path: auto-detects the USB adapter
 console.log("Connected to", fy.deviceModel, "(family:", fy.family, ")");
@@ -70,7 +72,7 @@ You can also pass an explicit port: `connectNode("/dev/cu.wchusbserial1220")` or
 ### Browser (Web Serial API)
 
 ```ts
-import { connectWeb, Channel, FEELTECH_USB_FILTERS } from "feeltech";
+import { connectWeb, Channel, FEELTECH_USB_FILTERS } from "@freqgen/feeltech";
 
 document.querySelector("#connect").addEventListener("click", async () => {
   const fy = await connectWeb({ filters: FEELTECH_USB_FILTERS });
@@ -86,16 +88,16 @@ The browser must support [Web Serial](https://caniuse.com/web-serial) (Chrome, E
 ### CLI
 
 ```bash
-npx feeltech list                    # list serial ports (* = FeelTech-likely)
-npx feeltech info                    # model, ID, family, both channel states
-npx feeltech set --channel 1 --waveform sine --freq 1000 --amp 3.3 --on
-npx feeltech set --channel 1 --off
-npx feeltech sweep --object freq --start 100 --end 10000 --time 5
-npx feeltech sweep --stop
-npx feeltech measure --gate 1
-npx feeltech waveforms --channel 2
-npx feeltech upload --slot 1 --file wave.json --resample --normalize
-npx feeltech --help
+npx @freqgen/feeltech list                    # list serial ports (* = FeelTech-likely)
+npx @freqgen/feeltech info                    # model, ID, family, both channel states
+npx @freqgen/feeltech set --channel 1 --waveform sine --freq 1000 --amp 3.3 --on
+npx @freqgen/feeltech set --channel 1 --off
+npx @freqgen/feeltech sweep --object freq --start 100 --end 10000 --time 5
+npx @freqgen/feeltech sweep --stop
+npx @freqgen/feeltech measure --gate 1
+npx @freqgen/feeltech waveforms --channel 2
+npx @freqgen/feeltech upload --slot 1 --file wave.json --resample --normalize
+npx @freqgen/feeltech --help
 ```
 
 The port is auto-detected; pass `--port /dev/cu.wchusbserial1220` (or `COMx`) to pin it. `--json` switches every command to machine-readable output.
@@ -105,7 +107,7 @@ The port is auto-detected; pass `--port /dev/cu.wchusbserial1220` (or `COMx`) to
 ## Finding the device (Node)
 
 ```ts
-import { findDevices, listPorts } from "feeltech/node";
+import { findDevices, listPorts } from "@freqgen/feeltech/node";
 
 console.log(await findDevices()); // FeelTech-likely ports only (by USB vendor ID)
 console.log(await listPorts());   // every serial port
@@ -161,7 +163,7 @@ await fy.configureChannel(Channel.Main, {
 ### Modulation
 
 ```ts
-import { ModulationMode, ModulationSource } from "feeltech";
+import { ModulationMode, ModulationSource } from "@freqgen/feeltech";
 
 await fy.setModulationMode(ModulationMode.AM);
 await fy.setModulationSource(ModulationSource.CH2);
@@ -173,7 +175,7 @@ await fy.manualTrigger();               // FY6900 only
 ### Sweep
 
 ```ts
-import { SweepObject, SweepMode } from "feeltech";
+import { SweepObject, SweepMode } from "@freqgen/feeltech";
 
 await fy.configureSweep({
   object: SweepObject.Frequency,
@@ -206,7 +208,7 @@ await fy.configureChannel(Channel.Main, {
 `uploadWaveform` requires exactly 8192 samples — pass `{ resample: true }` to linearly resample arbitrary-length data, and/or `{ normalize: true }` to scale it into −1…+1. The standalone helpers are exported too:
 
 ```ts
-import { resampleWaveform, normalizeWaveform } from "feeltech";
+import { resampleWaveform, normalizeWaveform } from "@freqgen/feeltech";
 
 const samples = resampleWaveform(normalizeWaveform(rawData)); // → 8192 points, −1…+1
 ```
@@ -216,7 +218,7 @@ const samples = resampleWaveform(normalizeWaveform(rawData)); // → 8192 points
 ### Frequency counter / measurement
 
 ```ts
-import { GateTime } from "feeltech";
+import { GateTime } from "@freqgen/feeltech";
 
 await fy.setGateTime(GateTime.OneSecond);
 await fy.resetCounter();
@@ -249,8 +251,8 @@ const raw = await fy.sendRead("RMF");     // raw read
 ## Testing your code without hardware
 
 ```ts
-import { FeelTech } from "feeltech";
-import { MockTransport } from "feeltech/testing";
+import { FeelTech } from "@freqgen/feeltech";
+import { MockTransport } from "@freqgen/feeltech/testing";
 
 const mock = new MockTransport({ family: "FY6900" });
 const fy = new FeelTech(mock);
@@ -403,7 +405,7 @@ src/
 ├── waveform-utils.ts  # resampleWaveform() / normalizeWaveform()
 ├── limits.ts          # frequency limits read from the reported model string
 ├── devices.ts         # registry descriptors
-├── testing.ts         # MockTransport (exported as feeltech/testing)
+├── testing.ts         # MockTransport (exported as @freqgen/feeltech/testing)
 ├── cli.ts             # `feeltech` command-line tool
 ├── transports/
 │   ├── node.ts        # re-exports @freqgen/core/node
@@ -422,7 +424,7 @@ examples/
 └── web/              # basic.html (Web Serial control panel)
 ```
 
-The `Transport` interface is intentionally minimal (`open`, `write`, `readLine`, `flush`, `close`). You can plug in a mock transport in tests, or wrap a TCP-to-serial bridge. It lives in [`@freqgen/core`](../awg-core) along with the serial transports, which the Spooky2 drivers share.
+The `Transport` interface is intentionally minimal (`open`, `write`, `readLine`, `flush`, `close`). You can plug in a mock transport in tests, or wrap a TCP-to-serial bridge. It lives in [`@freqgen/core`](../core) along with the serial transports, which the Spooky2 drivers share.
 
 ---
 
@@ -431,7 +433,7 @@ The `Transport` interface is intentionally minimal (`open`, `write`, `readLine`,
 `FeelTech` implements the vendor-neutral `SignalGenerator` interface from `@freqgen/core`, so the same code can drive a different make of generator:
 
 ```ts
-import type { SignalGenerator, ChannelStep } from "feeltech";
+import type { SignalGenerator, ChannelStep } from "@freqgen/feeltech";
 
 async function play(gen: SignalGenerator, step: ChannelStep) {
   await gen.applyStep(0, step);
@@ -463,7 +465,7 @@ const { limits, waveforms, dutyGatedByWaveform } = fy.capabilities;
 Frequency limits carry their own provenance. The sine maximum is read from the bandwidth marker the device reports in its model string (`FY6300-60M` → 60 MHz). Square and arbitrary bandwidth stay `null` — they are lower than sine, FeelTech does not document them, and square is what actually constrains most work, so a guess there would be worse than an admission:
 
 ```ts
-import { resolveCap } from "feeltech";
+import { resolveCap } from "@freqgen/feeltech";
 
 resolveCap(limits, "sine");    // { hz: 60_000_000, source: "spec" }
 resolveCap(limits, "square");  // { hz: 60_000_000, source: "assumed-sine" }
@@ -479,7 +481,7 @@ A full protocol reference, derived from the official FeelTech PDFs and corrected
 
 ## Troubleshooting
 
-**`No FeelTech-like USB serial adapter found`** — auto-detection matches USB vendor IDs `1a86` (CH340), `10c4` (CP210x) and `067b` (PL2303). If your adapter reports something else, pass the port path explicitly. Run `npx feeltech list` to see every port.
+**`No FeelTech-like USB serial adapter found`** — auto-detection matches USB vendor IDs `1a86` (CH340), `10c4` (CP210x) and `067b` (PL2303). If your adapter reports something else, pass the port path explicitly. Run `npx @freqgen/feeltech list` to see every port.
 
 **`Failed to open <path>`** — On macOS use `/dev/cu.*` (not `/dev/tty.*`); on Linux check `dmesg | tail` after plugging in to find the device, and ensure your user is in the `dialout` group.
 

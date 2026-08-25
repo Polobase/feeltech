@@ -18,14 +18,20 @@ This package holds what every driver needs and no protocol of its own:
 - **`RecordingTransport`** — records written bytes and replays scripted
   responses, for wire-transcript tests.
 
+- **`runProgram`** — play a frequency program (steps with dwell times, repeat
+  count, abort signal) on any `SignalGenerator`.
+
 You normally install a vendor package instead:
 
 | Package | Devices |
 | --- | --- |
-| [`feeltech`](https://www.npmjs.com/package/feeltech) | FeelTech / FeelElec FY2300, FY6300, FY6600, FY6800, FY6900, FY8300 |
+| [`@freqgen/feeltech`](../feeltech) | FeelTech / FeelElec FY2300, FY6300, FY6600, FY6800, FY6900, FY8300, FY3200S |
+| [`@freqgen/juntek`](../juntek) | JUNTEK JDS6600/2800/2900/8000, Koolertron CJDS66 & MHS-5200A |
+| [`@freqgen/spooky2`](../spooky2) | Spooky2 XM, Gen X, Gen X Pro |
 
 Reach for this package directly when you want to treat several generators
-interchangeably.
+interchangeably. The [monorepo README](../../README.md#feature-matrix) has the
+full device × capability feature matrix.
 
 ## License
 

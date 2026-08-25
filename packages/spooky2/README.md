@@ -1,7 +1,9 @@
 # @freqgen/spooky2
 
 TypeScript drivers for **Spooky2** signal generators — XM, Gen X and Gen X Pro —
-over USB serial, in Node.js and the browser.
+over USB serial, in Node.js and the browser. Part of the
+[`@freqgen`](../../README.md#feature-matrix) monorepo — see the main README for
+the device × capability feature matrix.
 
 > ### ⚠️ Output is not hardware-verified
 >
@@ -156,6 +158,22 @@ const preset = parsePreset(await readFile("preset.txt", "utf8"));
 const count = await pro.loadPreset(preset); // uploads waveform + n/p/g per program
 ```
 
+Real presets are thin: a shipped preset is often nine lines that inherit their
+amplitude, offset, active waveform and Out 2 frequency factor from a
+`Base_Preset` shell they point at. `resolvePresetChain` follows that chain (it
+takes an injected file reader, so it stays browser-safe), merging child over
+base into one preset — use it instead of `parsePreset` when loading a file from
+disk:
+
+```ts
+import { resolvePresetChain } from "@freqgen/spooky2";
+import { readFileSync } from "node:fs";
+
+const preset = resolvePresetChain("Acholeplasma (DNA) (R).txt", (p) =>
+  readFileSync(p, "utf8"),
+);
+```
+
 `loadPreset` uploads each program 1:1 (waveform to slot 41+index, name/gate/
 parameters to slot 1+index), using the preset's `Out1_Amplitude` for the
 amplitude field. Range entries (`36-198=11`) are run-time sweeps, not offline
@@ -181,8 +199,11 @@ await runPresetRun(device, run); // device: any SignalGenerator
 `presetToProgram` turns the preset into a device-agnostic run plan: ranges become
 sweeps at `freq ÷ wcm` (`36-198=11` → 3.27→18 Hz), radionics singles decode to
 `freq ÷ wcm` (held `wcm` seconds), and `Out1/Out2_Offset` percentages become DC
-offsets in volts. `runPresetRun` configures the outputs once, loops the frequency
-per step, and switches off at the end — the same structure the capture shows.
+offsets in volts. Each output also carries its own frequency transform, so Out 2
+rides at `Out 1 × Out2_Hz_Factor + Out2_Hz_Constant` (the DNA octave, a spectrum
+carrier) rather than both outputs sharing one frequency. `runPresetRun` configures
+the outputs once, loops the frequency per step, and switches off at the end — the
+same structure the capture shows.
 
 The CLI does the same thing:
 

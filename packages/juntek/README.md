@@ -1,7 +1,8 @@
 # @freqgen/juntek
 
 TypeScript drivers for **JUNTEK** and **Koolertron** signal generators over USB
-serial, in Node.js and the browser.
+serial, in Node.js and the browser. Part of the [`@freqgen`](../../README.md#feature-matrix)
+monorepo — see the main README for the device × capability feature matrix.
 
 > ### ⚠️ Nothing here is hardware-verified
 >
