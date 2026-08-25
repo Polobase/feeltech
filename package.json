@@ -1,130 +1,35 @@
 {
-  "name": "feeltech",
-  "version": "0.1.1",
-  "description": "TypeScript library and CLI for FeelTech / FeelElec FY-series arbitrary waveform generators (FY2300, FY6300, FY6600, FY6800, FY6900, FY8300). Works in Node.js (serialport) and browsers (Web Serial API).",
+  "name": "freqgen-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Monorepo for TypeScript signal / frequency generator drivers: FeelTech FY-series, JUNTEK & Koolertron, Spooky2 XM and Gen X, over a shared transport/driver core.",
   "type": "module",
-  "sideEffects": false,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "bin": {
-    "feeltech": "./dist/cli.js"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./node": {
-      "types": "./dist/transports/node.d.ts",
-      "default": "./dist/transports/node.js"
-    },
-    "./web": {
-      "types": "./dist/transports/web.d.ts",
-      "default": "./dist/transports/web.js"
-    },
-    "./testing": {
-      "types": "./dist/testing.d.ts",
-      "default": "./dist/testing.js"
-    },
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "dist",
-    "src",
-    "README.md",
-    "CHANGELOG.md",
-    "docs/serial_protocol.md"
+  "workspaces": [
+    "packages/*"
   ],
+  "scripts": {
+    "build": "npm run build -w @freqgen/core && npm run build -w @freqgen/juntek && npm run build -w @freqgen/spooky2 && npm run build -w @freqgen/feeltech",
+    "clean": "npm run clean --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check:package": "npm run check:package --workspaces --if-present"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Polobase/feeltech.git"
+    "url": "git+https://github.com/Polobase/freqgen.git"
   },
-  "homepage": "https://github.com/Polobase/feeltech#readme",
+  "homepage": "https://github.com/Polobase/freqgen#readme",
   "bugs": {
-    "url": "https://github.com/Polobase/feeltech/issues"
+    "url": "https://github.com/Polobase/freqgen/issues"
   },
-  "scripts": {
-    "build": "tsc",
-    "watch": "tsc --watch",
-    "clean": "rm -rf dist",
-    "typecheck": "tsc -p tsconfig.dev.json",
-    "test": "node --import tsx/esm --test test/*.test.ts",
-    "test:hw": "node --import tsx/esm test/hw/verify-quirks.ts",
-    "check:package": "publint && attw --pack . --profile esm-only",
-    "prepublishOnly": "npm run clean && npm run build && npm test && npm run check:package",
-    "example:web": "npm run build && npx --yes serve .",
-    "example:list": "node --import tsx/esm examples/basic/list_ports.ts",
-    "example:simple": "node --import tsx/esm examples/basic/simple.ts",
-    "example:basic": "node --import tsx/esm examples/basic/sine_wave.ts",
-    "example:info": "node --import tsx/esm examples/basic/info.ts",
-    "example:allwaves": "node --import tsx/esm examples/basic/all_waves.ts",
-    "example:debug": "node --import tsx/esm examples/lowlevel/debug.ts",
-    "example:raw:dump": "node --import tsx/esm examples/lowlevel/raw_dump.ts",
-    "example:raw:init": "node --import tsx/esm examples/lowlevel/raw_init_variations.ts",
-    "example:raw:cmd": "node --import tsx/esm examples/lowlevel/raw_commands.ts",
-    "example:raw:bytes": "node --import tsx/esm examples/lowlevel/raw_bytes.ts",
-    "example:sweep:freq": "node --import tsx/esm examples/sweep/sweep_frequency.ts",
-    "example:sweep:amp": "node --import tsx/esm examples/sweep/sweep_amplitude.ts",
-    "example:sweep:offset": "node --import tsx/esm examples/sweep/sweep_offset.ts",
-    "example:sweep:duty": "node --import tsx/esm examples/sweep/sweep_duty.ts",
-    "example:mod:am": "node --import tsx/esm examples/modulation/am.ts",
-    "example:mod:fm": "node --import tsx/esm examples/modulation/fm.ts",
-    "example:mod:pm": "node --import tsx/esm examples/modulation/pm.ts",
-    "example:mod:fsk": "node --import tsx/esm examples/modulation/fsk.ts",
-    "example:mod:psk": "node --import tsx/esm examples/modulation/psk.ts",
-    "example:mod:burst": "node --import tsx/esm examples/modulation/burst.ts",
-    "example:measure": "node --import tsx/esm examples/measurement/measure.ts",
-    "example:counter": "node --import tsx/esm examples/measurement/counter.ts",
-    "example:calibrate": "node --import tsx/esm examples/measurement/calibrate.ts",
-    "example:roundtrip": "node --import tsx/esm examples/measurement/roundtrip.ts",
-    "example:arb": "node --import tsx/esm examples/arb/simple_arb.ts",
-    "example:star": "node --import tsx/esm examples/arb/xy_star_plot.ts",
-    "example:gcode": "node --import tsx/esm examples/arb/xy_gcode_plot.ts",
-    "example:system": "node --import tsx/esm examples/system/settings.ts",
-    "example:demo": "node --import tsx/esm examples/demo.ts"
-  },
-  "keywords": [
-    "feeltech",
-    "feelelec",
-    "fy2300",
-    "fy6300",
-    "fy6600",
-    "fy6800",
-    "fy6900",
-    "fy8300",
-    "signal-generator",
-    "function-generator",
-    "waveform-generator",
-    "arbitrary-waveform",
-    "dds",
-    "serial",
-    "web-serial",
-    "serialport",
-    "typescript"
-  ],
   "author": "Manuel Haller Polo",
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
   },
-  "browser": {
-    "serialport": false,
-    "./dist/transports/node.js": false
-  },
-  "optionalDependencies": {
-    "serialport": "^12.0.0 || ^13.0.0"
-  },
-  "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.2",
-    "@types/node": "^20.0.0",
-    "@types/w3c-web-serial": "^1.0.6",
-    "publint": "^0.3.12",
-    "serialport": "^13.0.0",
-    "tsx": "^4.7.0",
-    "typescript": "^5.4.0"
-  },
   "allowScripts": {
     "@serialport/bindings-cpp@13.0.0": true,
-    "esbuild@0.28.1": true
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true
   }
 }

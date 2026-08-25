@@ -1,0 +1,72 @@
+{
+  "name": "@freqgen/juntek",
+  "version": "0.1.0",
+  "description": "TypeScript drivers for JUNTEK / Koolertron signal generators — JDS6600, JDS2800, JDS2900, JDS8000, CJDS66 and MHS-5200A — over USB serial, in Node.js and the browser.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "juntek": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Polobase/freqgen.git",
+    "directory": "packages/juntek"
+  },
+  "homepage": "https://github.com/Polobase/freqgen/tree/main/packages/juntek#readme",
+  "bugs": {
+    "url": "https://github.com/Polobase/freqgen/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.dev.json",
+    "test": "node --import tsx/esm --test test/*.test.ts",
+    "check:package": "publint && attw --pack . --profile esm-only"
+  },
+  "keywords": [
+    "juntek",
+    "koolertron",
+    "jds6600",
+    "jds2800",
+    "jds2900",
+    "jds8000",
+    "cjds66",
+    "mhs-5200a",
+    "signal-generator",
+    "function-generator",
+    "serial",
+    "web-serial",
+    "typescript"
+  ],
+  "author": "Manuel Haller Polo",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@freqgen/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
+    "@types/node": "^20.0.0",
+    "@types/w3c-web-serial": "^1.0.6",
+    "publint": "^0.3.12",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

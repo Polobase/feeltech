@@ -1,0 +1,81 @@
+{
+  "name": "@freqgen/core",
+  "version": "0.1.0",
+  "description": "Shared core for USB-serial signal / arbitrary waveform generator drivers: transports (Node serialport / Web Serial), the SignalGenerator interface, capability and frequency-limit metadata, and octave folding.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/transports/node.d.ts",
+      "default": "./dist/transports/node.js"
+    },
+    "./web": {
+      "types": "./dist/transports/web.d.ts",
+      "default": "./dist/transports/web.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Polobase/freqgen.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Polobase/freqgen/tree/main/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/Polobase/freqgen/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.dev.json",
+    "test": "node --import tsx/esm --test test/*.test.ts",
+    "check:package": "publint && attw --pack . --profile esm-only"
+  },
+  "keywords": [
+    "signal-generator",
+    "function-generator",
+    "waveform-generator",
+    "arbitrary-waveform",
+    "dds",
+    "serial",
+    "web-serial",
+    "serialport",
+    "typescript"
+  ],
+  "author": "Manuel Haller Polo",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "browser": {
+    "serialport": false,
+    "./dist/transports/node.js": false
+  },
+  "optionalDependencies": {
+    "serialport": "^12.0.0 || ^13.0.0"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
+    "@types/node": "^20.0.0",
+    "@types/w3c-web-serial": "^1.0.6",
+    "publint": "^0.3.12",
+    "serialport": "^13.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

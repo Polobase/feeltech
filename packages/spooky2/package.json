@@ -1,0 +1,67 @@
+{
+  "name": "@freqgen/spooky2",
+  "version": "0.1.0",
+  "description": "TypeScript drivers for Spooky2 signal generators \u2014 XM, Gen X and Gen X Pro \u2014 over USB serial, in Node.js and the browser.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "spooky2": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Polobase/freqgen.git",
+    "directory": "packages/spooky2"
+  },
+  "homepage": "https://github.com/Polobase/freqgen/tree/main/packages/spooky2#readme",
+  "bugs": {
+    "url": "https://github.com/Polobase/freqgen/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.dev.json",
+    "test": "node --import tsx/esm --test test/*.test.ts",
+    "check:package": "publint && attw --pack . --profile esm-only"
+  },
+  "keywords": [
+    "spooky2",
+    "generatorx",
+    "signal-generator",
+    "function-generator",
+    "rife",
+    "serial",
+    "web-serial",
+    "typescript"
+  ],
+  "author": "Manuel Haller Polo",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@freqgen/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
+    "@types/node": "^20.0.0",
+    "@types/w3c-web-serial": "^1.0.6",
+    "publint": "^0.3.12",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -6,3 +6,6 @@ dist
 .env.local
 .claude
 .npmrc
+temp/
+scripts/
+local/
