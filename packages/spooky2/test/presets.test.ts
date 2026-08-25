@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { RecordingTransport } from "@freqgen/core/testing";
@@ -130,11 +130,16 @@ describe("presetProgramsForUpload", () => {
   });
 });
 
-describe("real capture4 preset files", () => {
-  const captureDir = fileURLToPath(
-    new URL("../../../local/capture4/", import.meta.url),
-  );
+// These read the real Spooky2 preset `.txt` files from `local/capture4/`, which
+// is gitignored (raw captures stay off the repo), so they run only where those
+// captures are present — locally — and are skipped in CI. The inline fixtures
+// above (PLANT_GROWTH, MANIFESTATION, DNA) cover the same parsing logic with
+// committed data.
+const captureDir = fileURLToPath(
+  new URL("../../../local/capture4/", import.meta.url),
+);
 
+(existsSync(captureDir) ? describe : describe.skip)("real capture4 preset files", () => {
   function readPreset(rel: string): string {
     return readFileSync(`${captureDir}${rel}`, "utf8");
   }
