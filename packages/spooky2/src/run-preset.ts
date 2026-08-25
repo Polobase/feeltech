@@ -61,8 +61,15 @@ export async function runPresetRun(
     await device.setOutput(output.channel, true);
   }
 
-  const setFrequency = (hz: number) =>
-    Promise.all(run.outputs.map((o) => device.setFrequency(o.channel, hz)));
+  // Each output's frequency is `programFrequency × freqFactor + freqConstant`,
+  // so Out 2 = Out 1 × factor + constant (the DNA octave, a fixed carrier, …)
+  // runs correctly rather than both outputs sharing one frequency.
+  const setFrequency = (programHz: number) =>
+    Promise.all(
+      run.outputs.map((o) =>
+        device.setFrequency(o.channel, programHz * o.freqFactor + o.freqConstant),
+      ),
+    );
 
   try {
     for (let i = 0; i < run.segments.length; i++) {

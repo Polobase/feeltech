@@ -979,6 +979,11 @@ export class GenXPro implements SignalGenerator {
     const samples = SPOOKY2_WAVEFORMS[waveform];
     const amplitudeVpp =
       options.amplitudeVpp ?? Number(preset.settings["Out1_Amplitude"] ?? 20);
+    // Offline programs store centre offset (ratio 0 → 120), matching the capture:
+    // Spooky2 keeps offline programs centred and applies the preset's Out1_Offset
+    // live at run time (see presetToProgram / runPresetRun). Pass an explicit
+    // `offsetRatio` only to deliberately bake an offset into the stored program.
+    const offsetRatio = options.offsetRatio ?? 0;
 
     for (let i = 0; i < programs.length; i++) {
       const program = programs[i]!;
@@ -988,7 +993,7 @@ export class GenXPro implements SignalGenerator {
       await this.uploadProgram(slot, {
         waveformSlot,
         amplitudeVpp,
-        offsetRatio: options.offsetRatio ?? 0,
+        offsetRatio,
         dwell: program.dwell,
         name: program.name,
         frequenciesHz: program.frequenciesHz,

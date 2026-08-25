@@ -64,8 +64,14 @@ export interface Spooky2Preset {
   programs: PresetProgram[];
 }
 
-/** Parse a Spooky2 preset file's text into a typed model. */
-export function parsePreset(text: string): Spooky2Preset {
+interface RawPreset {
+  settings: Record<string, string>;
+  programNames: string[];
+  frequencyLines: string[];
+}
+
+/** Split preset text into its flat settings plus the repeated program lines. */
+function parsePresetRaw(text: string): RawPreset {
   const settings: Record<string, string> = {};
   const programNames: string[] = [];
   const frequencyLines: string[] = [];
@@ -83,16 +89,148 @@ export function parsePreset(text: string): Spooky2Preset {
     else settings[key] = value;
   }
 
-  const programs: PresetProgram[] = programNames.map((name, i) => ({
-    name,
-    frequencies: parseFrequencyLine(frequencyLines[i] ?? ""),
-  }));
+  return { settings, programNames, frequencyLines };
+}
 
-  return {
-    name: settings["PresetName"] ?? "",
-    settings,
-    programs,
+function buildPreset(raw: RawPreset): Spooky2Preset {
+  const programs: PresetProgram[] = raw.programNames.map((name, i) => ({
+    name,
+    frequencies: parseFrequencyLine(raw.frequencyLines[i] ?? ""),
+  }));
+  return { name: raw.settings["PresetName"] ?? "", settings: raw.settings, programs };
+}
+
+/** Parse a Spooky2 preset file's text into a typed model (no inheritance). */
+export function parsePreset(text: string): Spooky2Preset {
+  return buildPreset(parsePresetRaw(text));
+}
+
+/**
+ * Every waveform selection flag, per output. Spooky2 spells CH2's triangle
+ * `Out_2_Triangle`; the rest are `Out<ch>_<name>`. A preset picks exactly one
+ * waveform per output, so these behave as a radio group when merging.
+ */
+const WAVEFORM_FLAGS = [
+  "Sine", "Square", "Sawtooth", "Inverted_Sawtooth", "Triangle",
+  "Sine_Damped", "Square_Damped", "Sine_Hbomb", "Square_Hbomb",
+  "User_Defined_1", "User_Defined_2",
+] as const;
+
+function waveformFlagKeys(channel: 1 | 2): string[] {
+  return WAVEFORM_FLAGS.map((w) =>
+    channel === 2 && w === "Triangle" ? "Out_2_Triangle" : `Out${channel}_${w}`,
+  );
+}
+
+/**
+ * Merge a base preset's settings with a child's overrides.
+ *
+ * A child that selects any waveform for an output clears the base's waveform
+ * flags for that output first (they are a radio group — otherwise the base's
+ * selection would survive alongside the child's).
+ */
+function mergeSettings(
+  base: Record<string, string>,
+  child: Record<string, string>,
+): Record<string, string> {
+  const out = { ...base };
+  for (const channel of [1, 2] as const) {
+    const keys = waveformFlagKeys(channel);
+    if (keys.some((k) => child[k] === "True")) for (const k of keys) delete out[k];
+  }
+  return { ...out, ...child };
+}
+
+export interface ResolvePresetOptions {
+  /**
+   * Directory that ends the `Preset Collections` tree. `Base_Preset` paths are
+   * Windows-style and relative to it. Defaults to the ancestor of `entryPath`
+   * named `Preset Collections`.
+   */
+  presetCollectionsRoot?: string;
+  /** Called with a non-fatal problem (missing/unrooted base). */
+  onWarn?: (message: string) => void;
+}
+
+/**
+ * Resolve a preset's `Base_Preset` inheritance chain into one merged preset.
+ *
+ * Real presets are thin: `Acholeplasma (DNA) (R) - JW` is nine lines whose
+ * `Out2_Hz_Factor`, `Out1_Offset`, active waveform and per-waveform WCM all live
+ * in the base shell it points at. This follows that chain, merging child over
+ * base, so {@link presetToProgram} and {@link GenXPro.loadPreset} see the whole
+ * picture.
+ *
+ * `readText(path)` reads a preset file and throws if it is missing — injected so
+ * this stays browser-safe and unit-testable (the CLI passes `fs.readFileSync`).
+ * The child's frequency programs win; only settings are inherited.
+ */
+export function resolvePresetChain(
+  entryPath: string,
+  readText: (path: string) => string,
+  options: ResolvePresetOptions = {},
+): Spooky2Preset {
+  const resolve = (filePath: string, seen: Set<string>): RawPreset => {
+    if (seen.has(filePath)) {
+      throw new Error(`circular Base_Preset at ${filePath}`);
+    }
+    seen.add(filePath);
+
+    const raw = parsePresetRaw(readText(filePath));
+    const base = raw.settings["Base_Preset"];
+    if (!base) return raw;
+
+    const basePath = resolveBasePath(filePath, base, options.presetCollectionsRoot);
+    if (basePath === null) {
+      options.onWarn?.(`cannot resolve Base_Preset (no "Preset Collections" root): ${base}`);
+      return raw;
+    }
+    let baseRaw: RawPreset;
+    try {
+      baseRaw = resolve(readableBasePath(basePath, readText), seen);
+    } catch (err) {
+      if (err instanceof Error && /circular/.test(err.message)) throw err;
+      options.onWarn?.(`Base_Preset not found, using overrides only: ${basePath}`);
+      return raw;
+    }
+    return {
+      settings: mergeSettings(baseRaw.settings, raw.settings),
+      // Child frequencies win; fall back to the base's if the child has none.
+      programNames: raw.programNames.length ? raw.programNames : baseRaw.programNames,
+      frequencyLines: raw.programNames.length ? raw.frequencyLines : baseRaw.frequencyLines,
+    };
   };
+
+  return buildPreset(resolve(entryPath, new Set()));
+}
+
+/** Join a Windows-style `Base_Preset` path onto the Preset Collections root. */
+function resolveBasePath(
+  entryPath: string,
+  base: string,
+  rootOverride: string | undefined,
+): string | null {
+  const marker = "Preset Collections";
+  const norm = entryPath.replace(/\\/g, "/");
+  const root = rootOverride ?? (() => {
+    const idx = norm.indexOf(marker);
+    return idx === -1 ? null : norm.slice(0, idx + marker.length);
+  })();
+  if (root === null) return null;
+  const rel = base.replace(/\\/g, "/").replace(/^\/+/, "");
+  return `${root.replace(/\/+$/, "")}/${rel}`;
+}
+
+/** Base paths omit the `.txt` extension; find the form the reader can open. */
+function readableBasePath(basePath: string, readText: (path: string) => string): string {
+  try {
+    readText(basePath);
+    return basePath;
+  } catch {
+    const withExt = `${basePath}.txt`;
+    readText(withExt); // throws if this is missing too — caught by the caller
+    return withExt;
+  }
 }
 
 /** Split a `Loaded_Frequencies` value into entries. */
@@ -130,45 +268,58 @@ function parseFrequencyEntry(entry: string): PresetFrequency {
  * Range and DNA entries are excluded: ranges are run-time sweeps (see
  * {@link GenXPro.frequencySweep}), and DNA frequencies are not yet decodable.
  *
- * In radionics/spectrum presets a single stores its frequency as `base × wcm`
- * — the same multiplier as a `*_WCM` setting or a sibling range. Such a single
- * is decoded back to `freq ÷ wcm` (`396=11` → 36 Hz). A single whose value
- * matches no multiplier is a plain frequency with a dwell in seconds and is
- * kept as-is (`7.83=600` → 7.83 Hz, dwell 600).
+ * In radionics/spectrum presets a single stores its frequency as `base × wcm`,
+ * where `wcm` is the **active waveform's** wave-cycle multiplier
+ * (`Out1_Sine=True` → `Sine_WCM`). Such a single is decoded back to `freq ÷ wcm`
+ * (`396=11` → 36 Hz). Any other single is a plain frequency with a dwell in
+ * seconds and is kept as-is (`7.83=600` → 7.83 Hz, dwell 600) — matching only
+ * the active WCM (and only when it is > 1) avoids mistaking a dwell that happens
+ * to equal an unrelated WCM for a radionics multiplier.
  */
 export function presetProgramsForUpload(
   preset: Spooky2Preset,
 ): Array<{ name: string; frequenciesHz: number[]; dwell: number }> {
-  const wcms = spectrumWcmValues(preset);
+  const wcm = activeWaveformWcm(preset.settings);
+  const decode = (f: PresetFrequency) =>
+    wcm > 1 && f.dwellOrWcm === wcm ? f.hz / f.dwellOrWcm : f.hz;
   return preset.programs
     .map((program) => ({
       name: program.name,
       dwell: program.frequencies[0]?.dwellOrWcm ?? 180,
       frequenciesHz: program.frequencies
         .filter((f) => f.dna === null && f.endHz === null)
-        .map((f) => (wcms.has(f.dwellOrWcm) ? f.hz / f.dwellOrWcm : f.hz)),
+        .map(decode),
     }))
     .filter((program) => program.frequenciesHz.length > 0);
 }
 
 /**
- * The wave-cycle multipliers a preset uses: every `*_WCM` setting plus the
- * multiplier of every range entry (a range is always `start-end=wcm`).
+ * The wave-cycle multiplier of the preset's active waveform.
+ *
+ * The active waveform is the one whose `Out1_<name>=True` flag is set; its
+ * multiplier is `<name>_WCM` (`Sine`→`Sine_WCM`, `Square_Damped`→
+ * `Square_Damped_WCM`). Waveforms without a `_WCM` key (sawtooth, triangle)
+ * and an unset/≤1 multiplier return 1 — i.e. no radionics multiplication.
  */
-function spectrumWcmValues(preset: Spooky2Preset): Set<number> {
-  const values = new Set<number>();
-  for (const [key, raw] of Object.entries(preset.settings)) {
-    if (key.endsWith("_WCM")) {
-      const n = Number(raw);
-      if (Number.isFinite(n)) values.add(n);
+export function activeWaveformWcm(settings: Record<string, string>): number {
+  for (const flag of WAVEFORM_FLAGS) {
+    if (settings[`Out1_${flag}`] === "True") {
+      return numSetting(settings, `${flag}_WCM`, 1);
     }
   }
-  for (const program of preset.programs) {
-    for (const f of program.frequencies) {
-      if (f.endHz !== null && Number.isFinite(f.dwellOrWcm)) values.add(f.dwellOrWcm);
-    }
-  }
-  return values;
+  return 1;
+}
+
+/** Read a numeric setting, treating absent/blank/non-numeric as the fallback. */
+function numSetting(
+  settings: Record<string, string>,
+  key: string,
+  fallback: number,
+): number {
+  const raw = settings[key];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -195,7 +346,8 @@ export interface StepSegment {
 
 export type PresetSegment = SweepSegment | StepSegment;
 
-/** One output channel to drive: amplitude, DC offset and waveform. */
+/** One output channel to drive: amplitude, DC offset, waveform and its
+ * frequency relationship to the program frequency. */
 export interface PresetOutput {
   /** Channel index (0 = Out 1, 1 = Out 2). */
   channel: number;
@@ -204,6 +356,14 @@ export interface PresetOutput {
   /** DC offset in volts. */
   offsetV: number;
   waveform: WaveformKind;
+  /**
+   * This output's frequency is `programFrequency × freqFactor + freqConstant`.
+   * Out 1 uses `Frequency_Multiplier`/`Frequency_Constant`; Out 2 composes those
+   * with `Out2_Hz_Factor`/`Out2_Hz_Constant` (the DNA octave is factor 64, a
+   * fixed Out 2 is factor 0 with the frequency in the constant).
+   */
+  freqFactor: number;
+  freqConstant: number;
 }
 
 /** A preset turned into a device-agnostic run plan. */
@@ -242,36 +402,46 @@ const DEFAULT_SWEEP_STEPS = 84;
  *   (`36-198=11` sweeps 3.27 → 18 Hz), lasting `wcm` seconds total
  *   (uniform `wcm/steps` dwell per step).
  * - Radionics single `freq=wcm` → `freq/wcm` Hz held for `wcm` seconds
- *   (`396=11` → 36 Hz for 11 s).
+ *   (`396=11` → 36 Hz for 11 s), where `wcm` is the active waveform's multiplier.
  * - Standard single `freq=dwell` → `freq` Hz held for `dwell` seconds.
  * - DNA `~…` entries are skipped (decode not implemented) and reported.
  *
  * Amplitude comes from `Out1_Amplitude`/`Out2_Amplitude`; the DC offset is the
- * preset's percentage converted to volts (`offset% / 100 × Vpp / 2`).
+ * preset's percentage converted to volts (`offset% / 100 × Vpp / 2`). Each
+ * output's frequency relationship (`freqFactor`/`freqConstant`) is read too, so
+ * `Out 2 = Out 1 × factor + constant` runs correctly (see {@link PresetOutput}).
  */
 export function presetToProgram(
   preset: Spooky2Preset,
   options: PresetRunOptions = {},
 ): PresetRun {
-  const wcms = spectrumWcmValues(preset);
+  const s = preset.settings;
+  const wcm = activeWaveformWcm(s);
   const sweepSteps = options.sweepSteps ?? DEFAULT_SWEEP_STEPS;
-  const waveform = options.waveform ?? waveformFromSettings(preset.settings);
+  const waveform = options.waveform ?? waveformFromSettings(s);
   const warnings: string[] = [];
+
+  const freqMultiplier = numSetting(s, "Frequency_Multiplier", 1);
+  const freqConstant = numSetting(s, "Frequency_Constant", 0);
+  const out2Factor = numSetting(s, "Out2_Hz_Factor", 1);
+  const out2Constant = numSetting(s, "Out2_Hz_Constant", 0);
 
   const channels = options.channels ?? [0, 1];
   const outputs: PresetOutput[] = channels.map((channel) => {
-    const ampKey = channel === 0 ? "Out1_Amplitude" : "Out2_Amplitude";
-    const offKey = channel === 0 ? "Out1_Offset" : "Out2_Offset";
-    const amplitudeVpp = Number(preset.settings[ampKey] ?? 20);
-    const offsetPct = Number(preset.settings[offKey] ?? 0);
+    const isOut1 = channel === 0;
+    const amplitudeVpp = numSetting(s, isOut1 ? "Out1_Amplitude" : "Out2_Amplitude", 20);
+    const offsetPct = numSetting(s, isOut1 ? "Out1_Offset" : "Out2_Offset", 0);
     const offsetV = (offsetPct / 100) * (amplitudeVpp / 2);
-    if (Math.abs(offsetV) >= amplitudeVpp / 2) {
+    if (Math.abs(offsetV) >= amplitudeVpp / 2 && offsetPct !== 0) {
       warnings.push(
         `channel ${channel} offset ${offsetV.toFixed(2)} V consumes the full ` +
           `${amplitudeVpp} Vpp swing and will clip`,
       );
     }
-    return { channel, amplitudeVpp, offsetV, waveform };
+    // Out 2 composes the global transform with its own factor/constant.
+    const freqFactor = isOut1 ? freqMultiplier : freqMultiplier * out2Factor;
+    const freqConst = isOut1 ? freqConstant : freqConstant * out2Factor + out2Constant;
+    return { channel, amplitudeVpp, offsetV, waveform, freqFactor, freqConstant: freqConst };
   });
 
   const segments: PresetSegment[] = [];
@@ -282,17 +452,17 @@ export function presetToProgram(
         continue;
       }
       if (f.endHz !== null) {
-        const wcm = f.dwellOrWcm;
+        const rangeWcm = f.dwellOrWcm;
         segments.push({
           type: "sweep",
-          startHz: f.hz / wcm,
-          endHz: f.endHz / wcm,
+          startHz: f.hz / rangeWcm,
+          endHz: f.endHz / rangeWcm,
           steps: sweepSteps,
-          dwellPerStepSeconds: wcm / sweepSteps,
+          dwellPerStepSeconds: rangeWcm / sweepSteps,
         });
         continue;
       }
-      const isRadionics = wcms.has(f.dwellOrWcm);
+      const isRadionics = wcm > 1 && f.dwellOrWcm === wcm;
       segments.push({
         type: "step",
         frequencyHz: isRadionics ? f.hz / f.dwellOrWcm : f.hz,
@@ -304,10 +474,18 @@ export function presetToProgram(
   return { name: preset.name, outputs, segments, warnings };
 }
 
-/** Read the waveform the preset requests from its `Out1_*` flags. */
+/**
+ * Read the waveform the preset requests from its `Out1_<name>=True` flags,
+ * mapped to the vendor-neutral {@link WaveformKind} vocabulary. Shapes without a
+ * generic equivalent (the damped and H-bomb variants) fall back to their base
+ * shape; the default is sine.
+ */
 function waveformFromSettings(settings: Record<string, string>): WaveformKind {
-  if (settings["Out1_Sine"] === "True") return "sine";
-  if (settings["Out1_Square"] === "True") return "square";
-  if (settings["Out1_Triangle"] === "True") return "triangle";
+  const on = (name: string) => settings[`Out1_${name}`] === "True";
+  if (on("Sine") || on("Sine_Damped") || on("Sine_Hbomb")) return "sine";
+  if (on("Square") || on("Square_Damped") || on("Square_Hbomb")) return "square";
+  if (on("Sawtooth")) return "ramp-up";
+  if (on("Inverted_Sawtooth")) return "ramp-down";
+  if (on("Triangle")) return "triangle";
   return "sine";
 }

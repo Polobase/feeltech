@@ -5,7 +5,14 @@ import { fileURLToPath } from "node:url";
 
 import { RecordingTransport } from "@freqgen/core/testing";
 import { GenXPro } from "../src/genx-pro.js";
-import { parsePreset, parseFrequencyLine, presetProgramsForUpload } from "../src/presets.js";
+import {
+  parsePreset,
+  parseFrequencyLine,
+  presetProgramsForUpload,
+  presetToProgram,
+  resolvePresetChain,
+  activeWaveformWcm,
+} from "../src/presets.js";
 
 const PLANT_GROWTH = `"[Preset]"
 "PresetName=Spooky Radionics Plant Growth "
@@ -29,6 +36,8 @@ const BIRD_MITES = `"[Preset]"
 
 const MANIFESTATION = `"[Preset]"
 "PresetName=Spooky Radionics (Boost) Manifestation"
+"Out1_Sine=True"
+"Sine_WCM=11"
 "Out1_Offset=-100"
 "Out2_Offset=100"
 "Loaded_Programs=Reality Engineering 1 (CUST)"
@@ -239,5 +248,96 @@ describe("GenXPro.loadPreset", () => {
     // 20 V → 2000, matching the captured :p01=41,2000,120,600,1,7836,
     const writes = transport.writes.map((w) => w.trimEnd());
     assert.ok(writes.some((w) => w === ":p01=41,2000,120,600,1,7836,"));
+  });
+});
+
+describe("resolvePresetChain (Base_Preset inheritance)", () => {
+  // A thin child that inherits its settings from a base shell, in memory.
+  const files: Record<string, string> = {
+    "/Preset Collections/Remote/Child (R).txt": `"[Preset]"
+"Base_Preset=\\Shell\\DNA (Dual) (R)"
+"PresetName=Child (R)"
+"Out1_Square=True"
+"Loaded_Programs=Child (CUST)"
+"Loaded_Frequencies=1000=180,"
+"[/Preset]"`,
+    "/Preset Collections/Shell/DNA (Dual) (R).txt": `"[Preset]"
+"PresetName=DNA (Dual) (R)"
+"Out1_Amplitude=20"
+"Out2_Hz_Factor=64"
+"Out2_Hz_Constant=0"
+"Out1_Sawtooth=True"
+"Sine_WCM=11"
+"[/Preset]"`,
+  };
+  const read = (p: string) => {
+    const t = files[p];
+    if (t === undefined) throw new Error(`no such file: ${p}`);
+    return t;
+  };
+
+  it("merges base settings under the child's, keeping the child's frequencies", () => {
+    const preset = resolvePresetChain("/Preset Collections/Remote/Child (R).txt", read);
+    // inherited from the base shell:
+    assert.equal(preset.settings["Out1_Amplitude"], "20");
+    assert.equal(preset.settings["Out2_Hz_Factor"], "64");
+    assert.equal(preset.settings["Sine_WCM"], "11");
+    // child overrides win, and its own keys survive:
+    assert.equal(preset.settings["PresetName"], "Child (R)");
+    assert.equal(preset.programs[0]!.name, "Child (CUST)");
+    assert.equal(preset.programs[0]!.frequencies[0]!.hz, 1000);
+  });
+
+  it("clears the base's waveform flag when the child selects one (radio group)", () => {
+    const preset = resolvePresetChain("/Preset Collections/Remote/Child (R).txt", read);
+    // child picks Square, so the base's Out1_Sawtooth must not survive
+    assert.equal(preset.settings["Out1_Square"], "True");
+    assert.equal(preset.settings["Out1_Sawtooth"], undefined);
+  });
+
+  it("resolves the Out 2 factor into the run plan", () => {
+    const run = presetToProgram(resolvePresetChain("/Preset Collections/Remote/Child (R).txt", read));
+    assert.equal(run.outputs[1]!.freqFactor, 64); // Out 2 = Out 1 × 64
+  });
+
+  it("warns and falls back to overrides when the base is missing", () => {
+    const warnings: string[] = [];
+    const preset = resolvePresetChain(
+      "/Preset Collections/Remote/Child (R).txt",
+      (p) => {
+        if (p.includes("DNA (Dual)")) throw new Error("missing");
+        return read(p);
+      },
+      { onWarn: (m) => warnings.push(m) },
+    );
+    assert.equal(preset.settings["Out2_Hz_Factor"], undefined);
+    assert.ok(warnings.some((w) => /not found/.test(w)));
+  });
+});
+
+describe("activeWaveformWcm + radionics guard", () => {
+  it("reads the active waveform's WCM, not just any WCM in the file", () => {
+    const settings = { Out1_Square: "True", Sine_WCM: "11", Square_WCM: "7" };
+    assert.equal(activeWaveformWcm(settings), 7); // Square is active
+  });
+
+  it("treats a sawtooth/triangle preset as WCM 1 (no radionics division)", () => {
+    assert.equal(activeWaveformWcm({ Out1_Sawtooth: "True", Sine_WCM: "11" }), 1);
+  });
+
+  it("divides a single only when its value is the active WCM (> 1), not a coincidental dwell", () => {
+    // active Sine_WCM=11: 396=11 is radionics (396/11=36); 500=11 dwell would
+    // also match — but 500=180 must stay a plain 180 s dwell, unaffected.
+    const preset = parsePreset(
+      `"[Preset]"
+"PresetName=Guard"
+"Out1_Sine=True"
+"Sine_WCM=11"
+"Loaded_Programs=P (CUST)"
+"Loaded_Frequencies=396=11,500=180,"
+"[/Preset]"`,
+    );
+    const [prog] = presetProgramsForUpload(preset);
+    assert.deepEqual(prog!.frequenciesHz, [36, 500]); // 396/11=36, 500 kept
   });
 });

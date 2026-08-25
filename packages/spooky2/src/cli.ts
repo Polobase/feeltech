@@ -19,7 +19,7 @@ import { AwgError, DeviceRegistry, type ChannelStep } from "@freqgen/core";
 import { NodeSerialTransport, listPorts, describeBridge } from "@freqgen/core/node";
 
 import { SPOOKY2_DEVICES } from "./devices.js";
-import { parsePreset, presetToProgram } from "./presets.js";
+import { resolvePresetChain, presetToProgram } from "./presets.js";
 import { runPresetRun } from "./run-preset.js";
 import { detectHits, toBfbCsv, toBfbFrequenciesCsv } from "./biofeedback.js";
 
@@ -221,12 +221,17 @@ async function cmdRunPreset(values: ParsedCli["values"]): Promise<void> {
   const presetPath = values["preset"] ? String(values["preset"]) : undefined;
   if (!presetPath) throw new AwgError("--preset is required (path to a Spooky2 .txt preset)");
 
-  const text = readFileSync(presetPath, "utf8");
+  // Resolve the Base_Preset chain: real presets are thin and inherit amplitude,
+  // offset, the active waveform and the Out 2 factor from a shell they point at.
+  // With no Base_Preset this is just a parse of the one file.
+  const preset = resolvePresetChain(presetPath, (p) => readFileSync(p, "utf8"), {
+    onWarn: (message) => console.error(`⚠️  ${message}`),
+  });
   const channels = parseChannels(values["channels"]);
   const sweepSteps = values["sweep-steps"] !== undefined
     ? parseNumber("sweep-steps", values["sweep-steps"])
     : undefined;
-  const run = presetToProgram(parsePreset(text), {
+  const run = presetToProgram(preset, {
     channels,
     ...(sweepSteps !== undefined ? { sweepSteps } : {}),
   });

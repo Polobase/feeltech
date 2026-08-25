@@ -64,11 +64,30 @@ describe("presetToProgram", () => {
   it("maps Out1/Out2 offsets to volts per channel", () => {
     const run = presetToProgram(parsePreset(MANIFESTATION));
     assert.deepEqual(run.outputs, [
-      { channel: 0, amplitudeVpp: 20, offsetV: -10, waveform: "sine" },
-      { channel: 1, amplitudeVpp: 20, offsetV: 10, waveform: "sine" },
+      { channel: 0, amplitudeVpp: 20, offsetV: -10, waveform: "sine", freqFactor: 1, freqConstant: 0 },
+      { channel: 1, amplitudeVpp: 20, offsetV: 10, waveform: "sine", freqFactor: 1, freqConstant: 0 },
     ]);
     // full −100 %/+100 % offset clips a 20 Vpp signal → reported, not clamped
     assert.ok(run.warnings.some((w) => w.includes("will clip")));
+  });
+
+  it("derives Out 2's frequency transform from Out2_Hz_Factor/Constant", () => {
+    const dual = `"[Preset]"
+"PresetName=Dual"
+"Out2_Hz_Factor=.25"
+"Out2_Hz_Constant=358500"
+"Out1_Sine=True"
+"Loaded_Programs=P (CUST)"
+"Loaded_Frequencies=1000=180,"
+"[/Preset]"`;
+    const run = presetToProgram(parsePreset(dual));
+    assert.deepEqual(
+      run.outputs.map((o) => [o.channel, o.freqFactor, o.freqConstant]),
+      [
+        [0, 1, 0], // Out 1: program frequency as-is
+        [1, 0.25, 358500], // Out 2 = Out 1 × .25 + 358500
+      ],
+    );
   });
 
   it("keeps standard singles at their literal frequency and dwell", () => {
@@ -137,5 +156,22 @@ describe("runPresetRun", () => {
     assert.ok(writes.includes(":w29=1000,"));
     assert.ok(writes.includes(":w32=20,")); // Out 1 −100 %
     assert.ok(writes.includes(":w33=220,")); // Out 2 +100 %
+  });
+
+  it("drives Out 2 at Out 1 × factor (the DNA octave), not the same frequency", async () => {
+    const { transport, device } = await pro();
+    const dual = `"[Preset]"
+"PresetName=Octave"
+"Out2_Hz_Factor=64"
+"Out1_Sine=True"
+"Loaded_Programs=P (CUST)"
+"Loaded_Frequencies=1000=180,"
+"[/Preset]"`;
+    const run = presetToProgram(parsePreset(dual));
+    await runPresetRun(device, run, { sleep: async () => {} });
+
+    const writes = transport.writes.map((w) => w.trimEnd());
+    assert.ok(writes.includes(":w24=10008,")); // Out 1 = 1000 Hz
+    assert.ok(writes.includes(":w25=640008,")); // Out 2 = 64000 Hz (1000 × 64)
   });
 });

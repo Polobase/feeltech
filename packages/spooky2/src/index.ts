@@ -79,6 +79,8 @@ export type { Spooky2WaveformName } from "./waveforms.js";
 export {
   parsePreset,
   parseFrequencyLine,
+  resolvePresetChain,
+  activeWaveformWcm,
   presetProgramsForUpload,
   presetToProgram,
 } from "./presets.js";
@@ -92,6 +94,7 @@ export type {
   SweepSegment,
   StepSegment,
   PresetRunOptions,
+  ResolvePresetOptions,
 } from "./presets.js";
 export { runPresetRun } from "./run-preset.js";
 export type { RunPresetOptions } from "./run-preset.js";
