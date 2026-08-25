@@ -24,12 +24,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Polobase/feeltech.git",
+    "url": "git+https://github.com/Polobase/freqgen.git",
     "directory": "packages/spooky2"
   },
-  "homepage": "https://github.com/Polobase/feeltech/tree/main/packages/spooky2#readme",
+  "homepage": "https://github.com/Polobase/freqgen/tree/main/packages/spooky2#readme",
   "bugs": {
-    "url": "https://github.com/Polobase/feeltech/issues"
+    "url": "https://github.com/Polobase/freqgen/issues"
   },
   "scripts": {
     "build": "tsc",

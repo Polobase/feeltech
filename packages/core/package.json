@@ -32,12 +32,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Polobase/feeltech.git",
+    "url": "git+https://github.com/Polobase/freqgen.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/Polobase/feeltech/tree/main/packages/core#readme",
+  "homepage": "https://github.com/Polobase/freqgen/tree/main/packages/core#readme",
   "bugs": {
-    "url": "https://github.com/Polobase/feeltech/issues"
+    "url": "https://github.com/Polobase/freqgen/issues"
   },
   "scripts": {
     "build": "tsc",
