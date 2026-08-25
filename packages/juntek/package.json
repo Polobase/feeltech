@@ -4,6 +4,9 @@
   "description": "TypeScript drivers for JUNTEK / Koolertron signal generators — JDS6600, JDS2800, JDS2900, JDS8000, CJDS66 and MHS-5200A — over USB serial, in Node.js and the browser.",
   "type": "module",
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {

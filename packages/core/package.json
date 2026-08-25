@@ -4,6 +4,9 @@
   "description": "Shared core for USB-serial signal / arbitrary waveform generator drivers: transports (Node serialport / Web Serial), the SignalGenerator interface, capability and frequency-limit metadata, and octave folding.",
   "type": "module",
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
