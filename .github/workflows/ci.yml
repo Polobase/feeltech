@@ -18,7 +18,11 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
+      # Build first: each package resolves its `@freqgen/*` deps through the
+      # workspace symlink to the dependency's built `dist/` (its package.json
+      # `types`/`exports` point there), so typecheck, tests and check:package
+      # all need `dist/` to exist. Workspaces build in dependency order.
       - run: npm run build
+      - run: npm run typecheck
       - run: npm test
       - run: npm run check:package
